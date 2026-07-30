@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HA DB Viewer</title>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 2rem; background: #1c1c1c; color: #e0e0e0; }
+        h1 { color: #03a9f4; }
+        .table-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+        .table-card {
+            background: #2d2d2d; border-radius: 8px; padding: 1rem;
+            text-decoration: none; color: #e0e0e0; border: 1px solid #444;
+            transition: border-color 0.2s;
+        }
+        .table-card:hover { border-color: #03a9f4; }
+        .table-card h3 { margin: 0; color: #03a9f4; }
+    </style>
+</head>
+<body>
+    <h1>HA Database Viewer</h1>
+    <div class="table-list">
+        {% for table in tables %}
+        <a href="{{ ingress }}/table/{{ table }}" class="table-card">
+            <h3>{{ table }}</h3>
+        </a>
+        {% endfor %}
+    </div>
+</body>
+</html>
