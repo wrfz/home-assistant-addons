@@ -1,11 +1,11 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+FROM python:3.12-alpine
 
-RUN apk add --no-cache python3 py3-pip
+RUN apk add --no-cache sqlite
 
 COPY requirements.txt /opt/
-RUN pip3 install --no-cache-dir --break-system-packages -r /opt/requirements.txt
+RUN pip install --no-cache-dir -r /opt/requirements.txt
 
 COPY app.py /opt/
 COPY templates /opt/templates/
-COPY rootfs /
+
+CMD ["python3", "/opt/app.py"]
