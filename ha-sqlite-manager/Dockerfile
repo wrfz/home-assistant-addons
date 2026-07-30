@@ -9,3 +9,5 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /opt/requirements.txt
 COPY app.py /opt/
 COPY templates /opt/templates/
 COPY rootfs /
+
+ENTRYPOINT ["/init"]
