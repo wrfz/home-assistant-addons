@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{ table_name }} - HA DB Viewer</title>
+    <title>{{ table_name }} - HA SQLite Manager</title>
     <style>
         body { font-family: system-ui, sans-serif; margin: 2rem; background: #1c1c1c; color: #e0e0e0; }
         h1 { color: #03a9f4; }
@@ -21,17 +21,17 @@
     </style>
 </head>
 <body>
-    <a href="{{ ingress }}/">&larr; All Tables</a>
+    <a href="../">&larr; All Tables</a>
     <h1>{{ table_name }}</h1>
     <div class="info">{{ total_rows }} rows total | Page {{ page }} of {{ total_pages }}</div>
 
     <div class="pagination">
         {% if page > 1 %}
-        <a href="{{ ingress }}/table/{{ table_name }}?page={{ page - 1 }}&page_size={{ page_size }}">&laquo; Prev</a>
+        <a href="?page={{ page - 1 }}&page_size={{ page_size }}">&laquo; Prev</a>
         {% endif %}
         <span class="current">{{ page }}</span>
         {% if page < total_pages %}
-        <a href="{{ ingress }}/table/{{ table_name }}?page={{ page + 1 }}&page_size={{ page_size }}">Next &raquo;</a>
+        <a href="?page={{ page + 1 }}&page_size={{ page_size }}">Next &raquo;</a>
         {% endif %}
     </div>
 
@@ -58,11 +58,11 @@
 
     <div class="pagination">
         {% if page > 1 %}
-        <a href="{{ ingress }}/table/{{ table_name }}?page={{ page - 1 }}&page_size={{ page_size }}">&laquo; Prev</a>
+        <a href="?page={{ page - 1 }}&page_size={{ page_size }}">&laquo; Prev</a>
         {% endif %}
         <span class="current">{{ page }}</span>
         {% if page < total_pages %}
-        <a href="{{ ingress }}/table/{{ table_name }}?page={{ page + 1 }}&page_size={{ page_size }}">Next &raquo;</a>
+        <a href="?page={{ page + 1 }}&page_size={{ page_size }}">Next &raquo;</a>
         {% endif %}
     </div>
 </body>

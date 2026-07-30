@@ -16,18 +16,16 @@ def get_db():
 
 @aiohttp_jinja2.template("index.html")
 async def index(request):
-    ingress = request.app["ingress"]
     conn = get_db()
     tables = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     ).fetchall()
     conn.close()
-    return {"tables": [t["name"] for t in tables], "ingress": ingress}
+    return {"tables": [t["name"] for t in tables]}
 
 
 @aiohttp_jinja2.template("table.html")
 async def view_table(request):
-    ingress = request.app["ingress"]
     table_name = request.match_info["table_name"]
     page = int(request.query.get("page", 1))
     page_size = int(request.query.get("page_size", 100))
@@ -65,19 +63,14 @@ async def view_table(request):
         "page_size": page_size,
         "total_rows": total_rows,
         "total_pages": total_pages,
-        "ingress": ingress,
     }
 
 
 def create_app():
-    ingress = os.environ.get("INGRESS_PATH", "")
     app = web.Application()
-    app["ingress"] = ingress
     aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader("/opt/templates"))
-
-    prefix = ingress if ingress else ""
-    app.router.add_get(f"{prefix}/", index)
-    app.router.add_get(f"{prefix}/table/{{table_name}}", view_table)
+    app.router.add_get("/", index)
+    app.router.add_get("/table/{table_name}", view_table)
     return app
 
 

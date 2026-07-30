@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>HA DB Viewer</title>
+    <title>HA SQLite Manager</title>
     <style>
         body { font-family: system-ui, sans-serif; margin: 2rem; background: #1c1c1c; color: #e0e0e0; }
         h1 { color: #03a9f4; }
@@ -16,10 +16,10 @@
     </style>
 </head>
 <body>
-    <h1>HA Database Viewer</h1>
+    <h1>HA SQLite Manager</h1>
     <div class="table-list">
         {% for table in tables %}
-        <a href="{{ ingress }}/table/{{ table }}" class="table-card">
+        <a href="table/{{ table }}" class="table-card">
             <h3>{{ table }}</h3>
         </a>
         {% endfor %}
