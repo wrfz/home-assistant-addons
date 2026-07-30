@@ -1,11 +1,17 @@
 import sqlite3
-import os
+import logging
 from pathlib import Path
 from aiohttp import web
-import jinja2
-import aiohttp_jinja2
 
 DB_PATH = Path("/config/home-assistant_v2.db")
+STATIC_DIR = Path("/opt/static")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("ha-sqlite-manager")
 
 
 def get_db():
@@ -14,21 +20,28 @@ def get_db():
     return conn
 
 
-@aiohttp_jinja2.template("index.html")
 async def index(request):
+    log.info("Serving index page")
+    return web.FileResponse(STATIC_DIR / "index.html")
+
+
+async def api_tables(request):
+    log.info("Listing tables")
     conn = get_db()
     tables = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     ).fetchall()
     conn.close()
-    return {"tables": [t["name"] for t in tables]}
+    log.info("Found %d tables", len(tables))
+    return web.json_response([t["name"] for t in tables])
 
 
-@aiohttp_jinja2.template("table.html")
-async def view_table(request):
+async def api_table(request):
     table_name = request.match_info["table_name"]
     page = int(request.query.get("page", 1))
     page_size = int(request.query.get("page_size", 100))
+
+    log.info("Viewing table '%s' (page %d, page_size %d)", table_name, page, page_size)
 
     conn = get_db()
 
@@ -37,43 +50,43 @@ async def view_table(request):
     ).fetchone()
     if not valid:
         conn.close()
-        raise web.HTTPNotFound(text="Table not found")
+        log.warning("Table '%s' not found", table_name)
+        return web.json_response({"error": "Table not found"}, status=404)
 
     total_rows = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
     offset = (page - 1) * page_size
 
-    rows = conn.execute(
+    cursor = conn.execute(
         f'SELECT * FROM "{table_name}" LIMIT ? OFFSET ?', (page_size, offset)
-    ).fetchall()
-
-    columns = (
-        [desc[0] for desc in conn.execute(f'SELECT * FROM "{table_name}" LIMIT 1').description]
-        if rows
-        else []
     )
+    columns = [desc[0] for desc in cursor.description]
+    rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
 
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    log.info("Table '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
 
-    return {
+    return web.json_response({
         "table_name": table_name,
         "columns": columns,
-        "rows": [dict(r) for r in rows],
+        "rows": rows,
         "page": page,
         "page_size": page_size,
         "total_rows": total_rows,
         "total_pages": total_pages,
-    }
+    })
 
 
 def create_app():
     app = web.Application()
-    aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader("/opt/templates"))
     app.router.add_get("/", index)
-    app.router.add_get("/table/{table_name}", view_table)
+    app.router.add_get("/api/tables", api_tables)
+    app.router.add_get("/api/table/{table_name}", api_table)
     return app
 
 
 if __name__ == "__main__":
+    log.info("Starting HA SQLite Manager on port 8099")
+    log.info("Database: %s (exists: %s)", DB_PATH, DB_PATH.exists())
     app = create_app()
     web.run_app(app, port=8099)

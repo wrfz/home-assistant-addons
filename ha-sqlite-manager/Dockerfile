@@ -6,6 +6,6 @@ COPY requirements.txt /opt/
 RUN pip install --no-cache-dir -r /opt/requirements.txt
 
 COPY app.py /opt/
-COPY templates /opt/templates/
+COPY static /opt/static/
 
 CMD ["python3", "/opt/app.py"]

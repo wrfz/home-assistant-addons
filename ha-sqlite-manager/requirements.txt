@@ -1,4 +1,1 @@
 aiohttp
-aiohttp-jinja2
-aiosqlite
-jinja2
