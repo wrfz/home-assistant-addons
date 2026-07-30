@@ -16,6 +16,7 @@ panel_icon: "mdi:database-search"
 panel_title: "SQLite Manager"
 map:
   - config:ro
+init: false
 startup: application
 boot: manual
 options: {}
