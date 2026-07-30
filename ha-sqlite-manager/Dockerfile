@@ -1,5 +1,5 @@
 ARG BUILD_FROM
-FROM alpine:3.21
+FROM ${BUILD_FROM}
 
 RUN apk add --no-cache python3 py3-pip
 
@@ -8,5 +8,4 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /opt/requirements.txt
 
 COPY app.py /opt/
 COPY templates /opt/templates/
-
-CMD ["python3", "/opt/app.py"]
+COPY rootfs /
