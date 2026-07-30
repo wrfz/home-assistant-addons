@@ -1,7 +1,18 @@
 import sqlite3
+import json
 import logging
 from pathlib import Path
 from aiohttp import web
+
+
+class SafeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, bytes):
+            try:
+                return obj.decode("utf-8")
+            except UnicodeDecodeError:
+                return f"<binary {len(obj)} bytes>"
+        return super().default(obj)
 
 DB_PATH = Path("/config/home-assistant_v2.db")
 STATIC_DIR = Path("/opt/static")
@@ -66,7 +77,7 @@ async def api_table(request):
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
     log.info("Table '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
 
-    return web.json_response({
+    data = {
         "table_name": table_name,
         "columns": columns,
         "rows": rows,
@@ -74,7 +85,11 @@ async def api_table(request):
         "page_size": page_size,
         "total_rows": total_rows,
         "total_pages": total_pages,
-    })
+    }
+    return web.Response(
+        text=json.dumps(data, cls=SafeEncoder),
+        content_type="application/json",
+    )
 
 
 def create_app():
