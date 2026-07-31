@@ -31,6 +31,13 @@ def get_db():
     return conn
 
 
+def parse_int(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 async def index(request):
     log.info("Serving index page")
     return web.FileResponse(STATIC_DIR / "index.html")
@@ -70,8 +77,8 @@ async def api_states(request):
 
 async def api_table(request):
     table_name = request.match_info["table_name"]
-    page = int(request.query.get("page", 1))
-    page_size = int(request.query.get("page_size", 100))
+    page = parse_int(request.query.get("page"), 1)
+    page_size = parse_int(request.query.get("page_size"), 100)
 
     log.info("Viewing table '%s' (page %d, page_size %d)", table_name, page, page_size)
 
@@ -115,8 +122,8 @@ async def api_table(request):
 
 async def api_entity_states(request):
     entity_id = request.match_info["entity_id"]
-    page = int(request.query.get("page", 1))
-    page_size = int(request.query.get("page_size", 100))
+    page = parse_int(request.query.get("page"), 1)
+    page_size = parse_int(request.query.get("page_size"), 100)
 
     log.info("GET /api/entity/%s/states (page=%d, page_size=%d)", entity_id, page, page_size)
 
