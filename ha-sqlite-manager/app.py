@@ -47,6 +47,27 @@ async def api_tables(request):
     return web.json_response([t["name"] for t in tables])
 
 
+async def api_states(request):
+    log.info("Listing entities with state counts")
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT sm.metadata_id, sm.entity_id, COUNT(s.state_id) AS state_count
+        FROM states_meta sm
+        LEFT JOIN states s ON s.metadata_id = sm.metadata_id
+        GROUP BY sm.metadata_id, sm.entity_id
+        ORDER BY sm.entity_id
+        """
+    ).fetchall()
+    conn.close()
+    log.info("Found %d entities", len(rows))
+    data = [dict(r) for r in rows]
+    return web.Response(
+        text=json.dumps(data, cls=SafeEncoder),
+        content_type="application/json",
+    )
+
+
 async def api_table(request):
     table_name = request.match_info["table_name"]
     page = int(request.query.get("page", 1))
@@ -96,6 +117,7 @@ def create_app():
     app = web.Application()
     app.router.add_get("/", index)
     app.router.add_get("/api/tables", api_tables)
+    app.router.add_get("/api/states", api_states)
     app.router.add_get("/api/table/{table_name}", api_table)
     return app
 

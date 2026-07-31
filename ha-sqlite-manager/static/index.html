@@ -7,6 +7,15 @@
         h1 { color: #03a9f4; }
         a { color: #03a9f4; text-decoration: none; cursor: pointer; }
         a:hover { text-decoration: underline; }
+        .menu-section { margin-bottom: 2rem; }
+        .menu-section h2 { color: #999; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.08em; margin-bottom: 0.5rem; }
+        .button-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+        .nav-button {
+            background: #2d2d2d; border-radius: 8px; padding: 1.25rem;
+            color: #e0e0e0; border: 1px solid #444; font-size: 1rem;
+            transition: border-color 0.2s; cursor: pointer; text-align: center;
+        }
+        .nav-button:hover { border-color: #03a9f4; }
         .table-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
         .table-card {
             background: #2d2d2d; border-radius: 8px; padding: 1rem;
@@ -33,21 +42,61 @@
     </style>
 </head>
 <body>
-    <div id="back"><a onclick="showTables()">&larr; All Tables</a></div>
+    <div id="back"><a onclick="goBack()">&larr; Back</a></div>
     <h1 id="title">HA SQLite Manager</h1>
     <div id="content"></div>
 
     <script>
         const basePath = location.pathname.replace(/\/$/, '');
+        let backAction = null;
 
         async function api(path) {
             const resp = await fetch(basePath + path);
             return resp.json();
         }
 
-        async function showTables() {
-            document.getElementById('back').style.display = 'none';
+        function goBack() {
+            if (backAction) backAction();
+        }
+
+        function setBack(action) {
+            backAction = action;
+            document.getElementById('back').style.display = action ? 'block' : 'none';
+        }
+
+        async function showHome() {
+            setBack(null);
             document.getElementById('title').textContent = 'HA SQLite Manager';
+
+            let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
+            html += `<button class="nav-button" onclick="showStates()">States</button>`;
+            html += `<button class="nav-button" onclick="alert('Statistics - coming soon')">Statistics</button>`;
+            html += `<button class="nav-button" onclick="alert('Events - coming soon')">Events</button>`;
+            html += '</div></div>';
+
+            html += '<div class="menu-section"><h2>Tables</h2><div class="button-grid">';
+            html += `<button class="nav-button" onclick="showTables()">All Tables</button>`;
+            html += '</div></div>';
+
+            document.getElementById('content').innerHTML = html;
+        }
+
+        async function showStates() {
+            setBack(showHome);
+            document.getElementById('title').textContent = 'States';
+            const entities = await api('/api/states');
+            document.getElementById('content').innerHTML = `<div class="info">${entities.length} entities</div>`;
+            const html = '<div class="container"><table><thead><tr>' +
+                '<th>metadata_id</th><th>entity_id</th><th>state_count</th>' +
+                '</tr></thead><tbody>' +
+                entities.map(e => `<tr><td>${e.metadata_id}</td><td>${e.entity_id}</td><td>${e.state_count}</td></tr>`).join('') +
+                '</tbody></table></div>';
+            document.getElementById('content').innerHTML += html;
+        }
+
+        async function showTables() {
+            setBack(showHome);
+            document.getElementById('title').textContent = 'All Tables';
             const tables = await api('/api/tables');
             const html = '<div class="table-list">' +
                 tables.map(t => `<div class="table-card" onclick="showTable('${t}', 1)"><h3>${t}</h3></div>`).join('') +
@@ -56,7 +105,7 @@
         }
 
         async function showTable(name, page) {
-            document.getElementById('back').style.display = 'block';
+            setBack(showTables);
             document.getElementById('title').textContent = name;
             const data = await api(`/api/table/${encodeURIComponent(name)}?page=${page}&page_size=100`);
 
@@ -90,7 +139,7 @@
             document.getElementById('content').innerHTML = html;
         }
 
-        showTables();
+        showHome();
     </script>
 </body>
 </html>
