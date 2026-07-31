@@ -113,12 +113,63 @@ async def api_table(request):
     )
 
 
+async def api_entity_states(request):
+    entity_id = request.match_info["entity_id"]
+    page = int(request.query.get("page", 1))
+    page_size = int(request.query.get("page_size", 100))
+
+    log.info("Viewing states for entity '%s' (page %d, page_size %d)", entity_id, page, page_size)
+
+    conn = get_db()
+
+    meta = conn.execute(
+        "SELECT metadata_id FROM states_meta WHERE entity_id = ?", (entity_id,)
+    ).fetchone()
+    if not meta:
+        conn.close()
+        log.warning("Entity '%s' not found", entity_id)
+        return web.json_response({"error": "Entity not found"}, status=404)
+
+    metadata_id = meta["metadata_id"]
+    total_rows = conn.execute(
+        "SELECT COUNT(*) FROM states WHERE metadata_id = ?", (metadata_id,)
+    ).fetchone()[0]
+    offset = (page - 1) * page_size
+
+    cursor = conn.execute(
+        "SELECT * FROM states WHERE metadata_id = ? "
+        "ORDER BY last_updated_ts DESC LIMIT ? OFFSET ?",
+        (metadata_id, page_size, offset),
+    )
+    columns = [desc[0] for desc in cursor.description]
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    log.info("Entity '%s': %d states total, returning %d rows", entity_id, total_rows, len(rows))
+
+    data = {
+        "entity_id": entity_id,
+        "columns": columns,
+        "rows": rows,
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+    }
+    return web.Response(
+        text=json.dumps(data, cls=SafeEncoder),
+        content_type="application/json",
+    )
+
+
 def create_app():
     app = web.Application()
     app.router.add_get("/", index)
     app.router.add_get("/api/tables", api_tables)
     app.router.add_get("/api/states", api_states)
     app.router.add_get("/api/table/{table_name}", api_table)
+    app.router.add_get("/api/entity/{entity_id}/states", api_entity_states)
     return app
 
 
