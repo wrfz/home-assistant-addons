@@ -118,7 +118,7 @@ async def api_entity_states(request):
     page = int(request.query.get("page", 1))
     page_size = int(request.query.get("page_size", 100))
 
-    log.info("Viewing states for entity '%s' (page %d, page_size %d)", entity_id, page, page_size)
+    log.info("GET /api/entity/%s/states (page=%d, page_size=%d)", entity_id, page, page_size)
 
     conn = get_db()
 
@@ -127,15 +127,18 @@ async def api_entity_states(request):
     ).fetchone()
     if not meta:
         conn.close()
-        log.warning("Entity '%s' not found", entity_id)
+        log.warning("Entity '%s' not found in states_meta", entity_id)
         return web.json_response({"error": "Entity not found"}, status=404)
 
     metadata_id = meta["metadata_id"]
+    log.info("Entity '%s' -> metadata_id=%d", entity_id, metadata_id)
+
     total_rows = conn.execute(
         "SELECT COUNT(*) FROM states WHERE metadata_id = ?", (metadata_id,)
     ).fetchone()[0]
-    offset = (page - 1) * page_size
+    log.info("Entity '%s': %d states in total", entity_id, total_rows)
 
+    offset = (page - 1) * page_size
     cursor = conn.execute(
         "SELECT * FROM states WHERE metadata_id = ? "
         "ORDER BY last_updated_ts DESC LIMIT ? OFFSET ?",
@@ -146,7 +149,7 @@ async def api_entity_states(request):
     conn.close()
 
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    log.info("Entity '%s': %d states total, returning %d rows", entity_id, total_rows, len(rows))
+    log.info("Entity '%s': returning %d rows (page %d/%d)", entity_id, len(rows), page, total_pages)
 
     data = {
         "entity_id": entity_id,
