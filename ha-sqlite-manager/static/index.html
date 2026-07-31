@@ -135,7 +135,7 @@
             ).join('');
 
             const html = '<div class="container"><table><thead><tr>' + thead + '</tr></thead><tbody>' +
-                sorted.map(e => `<tr><td><a onclick="showEntityStates('${e.entity_id}')">${e.entity_id}</a></td><td>${e.metadata_id}</td><td>${e.state_count}</td></tr>`).join('') +
+                sorted.map(e => `<tr><td><a onclick="showEntityStates('${e.entity_id}', 1)">${e.entity_id}</a></td><td>${e.metadata_id}</td><td>${e.state_count}</td></tr>`).join('') +
                 '</tbody></table></div>';
 
             document.getElementById('content').innerHTML = `<div class="info">${statesData.length} entities</div>` + html;
