@@ -81,17 +81,52 @@
             document.getElementById('content').innerHTML = html;
         }
 
+        let statesData = [];
+        let statesSortKey = 'entity_id';
+        let statesSortDir = 'asc';
+
         async function showStates() {
             setBack(showHome);
             document.getElementById('title').textContent = 'States';
-            const entities = await api('/api/states');
-            document.getElementById('content').innerHTML = `<div class="info">${entities.length} entities</div>`;
-            const html = '<div class="container"><table><thead><tr>' +
-                '<th>metadata_id</th><th>entity_id</th><th>state_count</th>' +
-                '</tr></thead><tbody>' +
-                entities.map(e => `<tr><td>${e.metadata_id}</td><td>${e.entity_id}</td><td>${e.state_count}</td></tr>`).join('') +
+            statesData = await api('/api/states');
+            renderStates();
+        }
+
+        function sortStates(key) {
+            if (statesSortKey === key) {
+                statesSortDir = statesSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                statesSortKey = key;
+                statesSortDir = 'asc';
+            }
+            renderStates();
+        }
+
+        function renderStates() {
+            const columns = [
+                { key: 'entity_id', label: 'entity_id' },
+                { key: 'metadata_id', label: 'metadata_id' },
+                { key: 'state_count', label: 'state_count' }
+            ];
+
+            const sorted = [...statesData].sort((a, b) => {
+                const va = a[statesSortKey];
+                const vb = b[statesSortKey];
+                const dir = statesSortDir === 'asc' ? 1 : -1;
+                if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+                return String(va ?? '').localeCompare(String(vb ?? '')) * dir;
+            });
+
+            const arrow = statesSortDir === 'asc' ? ' &#9650;' : ' &#9660;';
+            const thead = columns.map(c =>
+                `<th style="cursor:pointer" onclick="sortStates('${c.key}')">${c.label}${statesSortKey === c.key ? arrow : ''}</th>`
+            ).join('');
+
+            const html = '<div class="container"><table><thead><tr>' + thead + '</tr></thead><tbody>' +
+                sorted.map(e => `<tr><td>${e.entity_id}</td><td>${e.metadata_id}</td><td>${e.state_count}</td></tr>`).join('') +
                 '</tbody></table></div>';
-            document.getElementById('content').innerHTML += html;
+
+            document.getElementById('content').innerHTML = `<div class="info">${statesData.length} entities</div>` + html;
         }
 
         async function showTables() {
