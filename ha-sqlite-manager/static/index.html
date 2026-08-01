@@ -84,6 +84,8 @@
 
         function readVar(parentDoc, name) {
             try {
+                const inline = parentDoc.documentElement.style.getPropertyValue(name).trim();
+                if (inline) return inline;
                 const el = parentDoc.createElement('div');
                 el.style.cssText = 'position:fixed;color:var(' + name + ', inherit);';
                 parentDoc.body.appendChild(el);
