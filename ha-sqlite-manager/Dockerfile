@@ -5,6 +5,7 @@ RUN apk add --no-cache sqlite
 COPY requirements.txt /opt/
 RUN pip install --no-cache-dir -r /opt/requirements.txt
 
+COPY config.yaml /opt/
 COPY app.py /opt/
 COPY static /opt/static/
 

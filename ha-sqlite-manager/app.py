@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import json
 import logging
@@ -16,6 +17,7 @@ class SafeEncoder(json.JSONEncoder):
 
 DB_PATH = Path("/config/home-assistant_v2.db")
 STATIC_DIR = Path("/opt/static")
+CONFIG_YAML = Path("/opt/config.yaml")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +25,17 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("ha-sqlite-manager")
+
+
+def read_app_version():
+    try:
+        m = re.search(r'^version:\s*"?([0-9.]+)', CONFIG_YAML.read_text(), re.MULTILINE)
+        return m.group(1) if m else "unknown"
+    except Exception:
+        return "unknown"
+
+
+APP_VERSION = read_app_version()
 
 
 def get_db():
@@ -39,8 +52,11 @@ def parse_int(value, default):
 
 
 async def index(request):
-    log.info("Serving index page")
-    return web.FileResponse(STATIC_DIR / "index.html")
+    log.info("Serving index page (app version %s)", APP_VERSION)
+    html = (STATIC_DIR / "index.html").read_text().replace("__APP_VERSION__", APP_VERSION)
+    resp = web.Response(text=html, content_type="text/html")
+    resp.headers["X-Addon-Version"] = APP_VERSION
+    return resp
 
 
 async def api_tables(request):
