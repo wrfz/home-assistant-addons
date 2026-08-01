@@ -84,15 +84,20 @@
         };
 
         const debugEl = document.getElementById('theme-debug');
-        let debugEnabled = true;
-        debugEl.style.display = 'block';
-        debugEl.textContent = 'DBG-v4 app=v' + '__APP_VERSION__' + '\n';
+        let debugEnabled = false;
         function debug(msg) {
             console.log('[theme]', msg);
             if (debugEnabled && debugEl) {
                 debugEl.textContent += msg + '\n';
             }
         }
+        function toggleDebug() {
+            debugEnabled = !debugEnabled;
+            debugEl.style.display = debugEnabled ? 'block' : 'none';
+            debugEl.textContent = 'DBG-v5 app=v' + '__APP_VERSION__' + '\n';
+            if (debugEnabled) applyTheme();
+        }
+        document.getElementById('title').addEventListener('click', toggleDebug);
 
         function readVar(parentDoc, name) {
             try {
