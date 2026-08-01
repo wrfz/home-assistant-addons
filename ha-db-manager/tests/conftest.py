@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -7,6 +8,10 @@ import pytest_asyncio
 from aiohttp.test_utils import TestClient, TestServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+_ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("HA_STATIC_DIR", str(_ROOT / "static"))
+os.environ.setdefault("HA_CONFIG_YAML", str(_ROOT / "config.yaml"))
 
 import db
 import app as app_module

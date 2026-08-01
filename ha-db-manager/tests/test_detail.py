@@ -75,3 +75,31 @@ async def test_detail_sort_injection_safe(client):
     assert r.status == 200
     r2 = await client.get("/api/table/states")
     assert (await r2.json())["total_rows"] == 4
+
+
+async def test_static_appjs_served_with_version(client):
+    r = await client.get("/static/app.js")
+    assert r.status == 200
+    assert r.headers.get("Content-Type", "").startswith("application/javascript")
+    assert r.headers.get("Cache-Control") == "public, max-age=31536000, immutable"
+    body = await r.text()
+    assert "__APP_VERSION__" not in body
+    assert "Home Assistant DB Manager" in body
+
+
+async def test_static_stylecss_served(client):
+    r = await client.get("/static/style.css")
+    assert r.status == 200
+    assert r.headers.get("Content-Type", "").startswith("text/css")
+    body = await r.text()
+    assert "--app-accent" in body
+
+
+async def test_static_version_query_ignored(client):
+    r = await client.get("/static/app.js?v=0.40.0")
+    assert r.status == 200
+
+
+async def test_static_traversal_blocked(client):
+    r = await client.get("/static/../app.py")
+    assert r.status == 404

@@ -1,34 +1,36 @@
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-HTML = Path(__file__).resolve().parents[1] / "static" / "index.html"
+ROOT = Path(__file__).resolve().parents[1]
+HTML = ROOT / "static" / "index.html"
+APPJS = ROOT / "static" / "app.js"
+STYLECSS = ROOT / "static" / "style.css"
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 
 
-def test_frontend_script_syntax(tmp_path):
+def test_frontend_script_syntax():
+    subprocess.run(["node", "--check", str(APPJS)], check=True)
+
+
+def test_frontend_html_loads_external_assets():
     html = HTML.read_text()
-    match = re.search(r"<script>(.*)</script>", html, re.S)
-    assert match, "no inline script found"
-    script = match.group(1)
-    assert "__APP_VERSION__" in html
-    out = tmp_path / "app.js"
-    out.write_text(script)
-    subprocess.run(["node", "--check", str(out)], check=True)
+    assert 'src="/static/app.js?v=__APP_VERSION__"' in html
+    assert 'href="/static/style.css?v=__APP_VERSION__"' in html
+    assert "<script>" not in html  # no inline JS left behind
+    assert "<style>" not in html  # no inline CSS left behind
 
 
 def test_frontend_has_version_placeholder():
-    html = HTML.read_text()
-    assert "__APP_VERSION__" in html
+    assert "__APP_VERSION__" in APPJS.read_text()
 
 
 def test_frontend_has_short_term_usage():
-    html = HTML.read_text()
-    assert "Statistics Short Term" in html
-    assert "statisticsShortTermConfig" in html
-    assert "/api/statistics-short-term" in html
-    assert "statistics_short_term" in html
+    appjs = APPJS.read_text()
+    assert "Statistics Short Term" in appjs
+    assert "statisticsShortTermConfig" in appjs
+    assert "/api/statistics-short-term" in appjs
+    assert "statistics_short_term" in appjs

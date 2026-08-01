@@ -43,14 +43,4 @@ jobs:
           HA_TEST_PG_URL: postgresql://postgres:secret@localhost:5433/hass
         run: python -m pytest ha-db-manager -v
       - name: Frontend syntax check
-        run: |
-          python - <<'EOF'
-          import pathlib, re, subprocess, tempfile
-          html = pathlib.Path("ha-db-manager/static/index.html").read_text()
-          m = re.search(r"<script>(.*)</script>", html, re.S)
-          assert m, "no inline script found"
-          f = tempfile.NamedTemporaryFile(suffix=".js", delete=False)
-          f.write(m.group(1).encode())
-          f.close()
-          subprocess.run(["node", "--check", f.name], check=True)
-          EOF
+        run: node --check ha-db-manager/static/app.js

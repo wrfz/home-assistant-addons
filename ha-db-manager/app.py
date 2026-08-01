@@ -19,8 +19,8 @@ class SafeEncoder(json.JSONEncoder):
                 return f"<binary {len(obj)} bytes>"
         return super().default(obj)
 
-STATIC_DIR = Path("/opt/static")
-CONFIG_YAML = Path("/opt/config.yaml")
+STATIC_DIR = Path(os.environ.get("HA_STATIC_DIR", "/opt/static"))
+CONFIG_YAML = Path(os.environ.get("HA_CONFIG_YAML", "/opt/config.yaml"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,6 +61,20 @@ async def index(request):
     html = (STATIC_DIR / "index.html").read_text().replace("__APP_VERSION__", APP_VERSION)
     resp = web.Response(text=html, content_type="text/html")
     resp.headers["X-Addon-Version"] = APP_VERSION
+    return resp
+
+
+async def static_file(request):
+    name = request.match_info["name"]
+    path = (STATIC_DIR / name).resolve()
+    if STATIC_DIR.resolve() not in path.parents or not path.is_file():
+        raise web.HTTPNotFound()
+    text = path.read_text()
+    if name == "app.js":
+        text = text.replace("__APP_VERSION__", APP_VERSION)
+    content_type = "application/javascript" if name.endswith(".js") else "text/css"
+    resp = web.Response(text=text, content_type=content_type)
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
 
 
@@ -673,7 +687,8 @@ async def start_watch_loop(app):
 @web.middleware
 async def no_cache_middleware(request, handler):
     resp = await handler(request)
-    resp.headers["Cache-Control"] = "no-store"
+    if not request.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
@@ -686,6 +701,7 @@ def create_app():
     }
     load_settings(app)
     app.router.add_get("/", index)
+    app.router.add_get("/static/{name}", static_file)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/api/settings", api_get_settings)
     app.router.add_post("/api/settings", api_set_settings)
