@@ -82,27 +82,34 @@
             '--app-border-strong': '--divider-color'
         };
 
+        function readVar(parentDoc, name) {
+            try {
+                const el = parentDoc.createElement('div');
+                el.style.cssText = 'position:fixed;color:var(' + name + ', inherit);';
+                parentDoc.body.appendChild(el);
+                const val = getComputedStyle(el).color;
+                el.remove();
+                return val && val !== 'rgba(0, 0, 0, 0)' ? val : '';
+            } catch (e) {
+                return '';
+            }
+        }
+
         function applyTheme() {
+            if (window.parent === window) return;
             const root = document.documentElement;
             try {
                 const parentDoc = window.parent.document;
-                const source = parentDoc.querySelector('home-assistant') || parentDoc.documentElement;
-                const cs = getComputedStyle(source);
                 for (const [target, sourceVar] of Object.entries(themeMap)) {
-                    const val = cs.getPropertyValue(sourceVar).trim();
-                    if (val && !val.startsWith('var(')) root.style.setProperty(target, val);
+                    const val = readVar(parentDoc, sourceVar);
+                    if (val) root.style.setProperty(target, val);
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error('Could not apply HA theme:', e);
+            }
         }
 
-        try {
-            const ha = window.parent.document.querySelector('home-assistant');
-            if (ha) {
-                applyTheme();
-                new MutationObserver(applyTheme).observe(ha, { attributes: true, attributeFilter: ['class', 'style'] });
-            }
-        } catch (e) {}
-
+        applyTheme();
         setInterval(applyTheme, 1000);
 
         async function api(path) {
