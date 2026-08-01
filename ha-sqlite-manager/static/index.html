@@ -227,7 +227,6 @@
             setBack(null);
             setViewSpec(null);
             lastTable = null;
-            stopUsagePoll();
             usageViewActive = false;
             document.getElementById('title').textContent = 'HA SQLite Manager';
 
@@ -255,6 +254,7 @@
 
         const statesConfig = {
             listEndpoint: '/api/states',
+            watchTable: 'states',
             label: 'entities',
             sortKey: 'entity_id',
             idKey: 'entity_id',
@@ -269,6 +269,7 @@
 
         const statisticsConfig = {
             listEndpoint: '/api/statistics',
+            watchTable: 'statistics',
             label: 'statistics',
             sortKey: 'statistic_id',
             idKey: 'statistic_id',
@@ -283,6 +284,7 @@
 
         const eventsConfig = {
             listEndpoint: '/api/event-types',
+            watchTable: 'events',
             label: 'event types',
             sortKey: 'event_type',
             idKey: 'event_type',
@@ -296,24 +298,14 @@
         };
 
         let usageGlobalBaseline = 0;
-        let usagePollId = null;
         let usageViewActive = false;
-
-        function stopUsagePoll() {
-            if (usagePollId) { clearInterval(usagePollId); usagePollId = null; }
-        }
-
-        function startUsagePoll() {
-            if (usagePollId) return;
-            usagePollId = setInterval(pollUsage, 3000);
-        }
 
         function usageValue(e, key) {
             if (key === '__new__') return e['new_count'] || 0;
             return e[key];
         }
 
-        async function pollUsage() {
+        async function usageReload() {
             if (!usageConfig) return;
             try {
                 const data = await api(usageConfig.listEndpoint + '?since=' + usageGlobalBaseline);
@@ -337,16 +329,15 @@
                         }))
                         .sort((a, b) => b.new - a.new)
                         .slice(0, 3);
-                    debug(`usage poll '${usageConfig.label}' changed | top new: ` + JSON.stringify(topNew));
+                    debug(`usage reload '${usageConfig.label}' | top new: ` + JSON.stringify(topNew));
                 }
             } catch (err) {}
         }
 
         async function showUsageView(title, config) {
             setBack(showHome);
-            setViewSpec(null);
             lastTable = null;
-            stopUsagePoll();
+            usageViewActive = false;
             document.getElementById('title').textContent = title;
             showLoading();
             usageData = await api(config.listEndpoint);
@@ -361,7 +352,7 @@
                 }))));
             renderUsage();
             usageViewActive = true;
-            if (liveOn) startUsagePoll();
+            setViewSpec({ kind: 'usage', table: config.watchTable, page: 1, page_size: 1, sort: null, dir: null });
         }
 
         function sortUsage(key) {
@@ -411,7 +402,6 @@
             setBack(showHome);
             setViewSpec(null);
             lastTable = null;
-            stopUsagePoll();
             usageViewActive = false;
             document.getElementById('title').textContent = 'All Tables';
             showLoading();
@@ -496,8 +486,13 @@
         let currentViewSpec = null;
 
         function refresh() {
-            debug('refresh button pressed');
-            silentReload();
+            if (usageViewActive) {
+                debug('refresh button pressed');
+                usageReload();
+            } else {
+                debug('refresh button pressed');
+                silentReload();
+            }
         }
 
         function toggleLive() {
@@ -506,10 +501,8 @@
             document.getElementById('live-toggle').classList.toggle('live-on', liveOn);
             debug(`live button pressed -> ${liveOn ? 'on' : 'off'}`);
             if (liveOn) {
-                if (usageViewActive) startUsagePoll();
                 connectWs();
             } else {
-                stopUsagePoll();
                 if (ws) { ws.close(); ws = null; }
             }
         }
@@ -523,7 +516,10 @@
             ws.onmessage = e => {
                 try {
                     const msg = JSON.parse(e.data);
-                    if (msg.type === 'reload') silentReload();
+                    if (msg.type === 'reload') {
+                        if (usageViewActive) usageReload();
+                        else silentReload();
+                    }
                 } catch (err) {}
             };
             ws.onclose = () => {
@@ -556,7 +552,6 @@
             setBack(showHome);
             setViewSpec(null);
             lastTable = null;
-            stopUsagePoll();
             usageViewActive = false;
             document.getElementById('title').textContent = 'Settings';
             const opts = localeOptions.map(o =>
@@ -610,7 +605,6 @@
 
         async function showTable(name, page, sortKey, sortDir) {
             setBack(showTables);
-            stopUsagePoll();
             usageViewActive = false;
             setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = name;
@@ -628,7 +622,6 @@
 
         async function showEntityStates(entity_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('States', statesConfig));
-            stopUsagePoll();
             usageViewActive = false;
             setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = entity_id;
@@ -646,7 +639,6 @@
 
         async function showStatisticData(statistic_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('Statistics', statisticsConfig));
-            stopUsagePoll();
             usageViewActive = false;
             setViewSpec({ kind: 'statistic', table: 'statistics', id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = statistic_id;
@@ -664,7 +656,6 @@
 
         async function showEventTypeData(event_type, page, sortKey, sortDir) {
             setBack(() => showUsageView('Events', eventsConfig));
-            stopUsagePoll();
             usageViewActive = false;
             setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = event_type;

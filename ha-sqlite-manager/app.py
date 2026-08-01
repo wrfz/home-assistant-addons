@@ -423,7 +423,14 @@ WATCH_INTERVAL = 3
 
 def max_id(conn, spec):
     kind = spec.get("kind")
-    if kind == "entity":
+    if kind == "usage":
+        pk = {"states": "state_id", "statistics": "id", "events": "event_id"}.get(spec.get("table"))
+        if pk:
+            row = conn.execute(
+                f'SELECT MAX("{pk}") AS m FROM "{spec.get("table")}"'
+            ).fetchone()
+            return row["m"] if row and row["m"] is not None else 0
+    elif kind == "entity":
         row = conn.execute(
             "SELECT MAX(state_id) AS m FROM states WHERE metadata_id = "
             "(SELECT metadata_id FROM states_meta WHERE entity_id = ?)",
@@ -502,11 +509,14 @@ def check_view_changed(conn, spec, state):
     return changed
 
 
+def view_key(view):
+    return json.dumps(view, sort_keys=True)
+
+
 async def ws_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    ws["watch"] = None
-    ws["state"] = {"max_id": None, "sig": None}
+    ws["watch_key"] = None
     request.app["watch_connections"].add(ws)
     log.info("WebSocket client connected (%d active)", len(request.app["watch_connections"]))
     try:
@@ -518,11 +528,28 @@ async def ws_handler(request):
                     continue
                 if data.get("type") == "watch":
                     view = data.get("view")
-                    ws["watch"] = view
-                    ws["state"] = {"max_id": None, "sig": None}
+                    old = ws.get("watch_key")
+                    if old and old in request.app["watches"]:
+                        request.app["watches"][old]["connections"].discard(ws)
+                        if not request.app["watches"][old]["connections"]:
+                            del request.app["watches"][old]
+                    ws["watch_key"] = None
+                    if view:
+                        key = view_key(view)
+                        watch = request.app["watches"].setdefault(
+                            key,
+                            {"state": {"max_id": None, "sig": None}, "connections": set(), "spec": view},
+                        )
+                        watch["connections"].add(ws)
+                        ws["watch_key"] = key
                     log.info("Watch view set: %s", view)
     finally:
         request.app["watch_connections"].discard(ws)
+        key = ws.get("watch_key")
+        if key and key in request.app["watches"]:
+            request.app["watches"][key]["connections"].discard(ws)
+            if not request.app["watches"][key]["connections"]:
+                del request.app["watches"][key]
         log.info("WebSocket client disconnected (%d active)", len(request.app["watch_connections"]))
     return ws
 
@@ -530,18 +557,18 @@ async def ws_handler(request):
 async def watch_loop(app):
     while True:
         await asyncio.sleep(WATCH_INTERVAL)
-        for ws in list(app["watch_connections"]):
-            spec = ws.get("watch")
-            if not spec:
+        for key, watch in list(app["watches"].items()):
+            if not watch["connections"]:
                 continue
             try:
                 conn = get_db()
                 try:
-                    changed = check_view_changed(conn, spec, ws["state"])
+                    changed = check_view_changed(conn, watch["spec"], watch["state"])
                 finally:
                     conn.close()
                 if changed:
-                    await ws.send_json({"type": "reload"})
+                    for ws in list(watch["connections"]):
+                        await ws.send_json({"type": "reload"})
             except Exception as e:
                 log.warning("Watch check failed: %s", e)
 
@@ -560,6 +587,7 @@ async def no_cache_middleware(request, handler):
 def create_app():
     app = web.Application(middlewares=[no_cache_middleware])
     app["watch_connections"] = set()
+    app["watches"] = {}
     app.router.add_get("/", index)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/api/tables", api_tables)
