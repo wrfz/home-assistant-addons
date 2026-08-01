@@ -109,6 +109,37 @@ async def api_states(request):
     )
 
 
+def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, default_sort):
+    """Run a paged SELECT * against a table with an optional WHERE clause.
+
+    Returns (columns, rows, total_pages, total_rows). Sort column and direction
+    are validated against the table's columns; invalid values fall back to
+    default_sort (None means no ordering). Raises KeyError if the table does not
+    exist.
+    """
+    table_cols = db.table_columns(conn, table)
+    if not table_cols:
+        raise KeyError(table)
+    if sort not in table_cols:
+        sort = default_sort
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+    order_clause = ""
+    if sort:
+        order_clause = f' ORDER BY {db.quote(sort)} {sort_dir.upper()}'
+    total_rows = db.execute(
+        conn, f'SELECT COUNT(*) AS c FROM {db.quote(table)}{where}', params
+    ).fetchone()["c"]
+    offset = (page - 1) * page_size
+    res = db.execute(
+        conn,
+        f'SELECT * FROM {db.quote(table)}{where}{order_clause} LIMIT ? OFFSET ?',
+        params + [page_size, offset],
+    )
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    return res.columns, res.fetchall(), total_pages, total_rows
+
+
 async def api_table(request):
     table_name = request.match_info["table_name"]
     page = parse_int(request.query.get("page"), 1)
@@ -122,32 +153,16 @@ async def api_table(request):
     )
 
     conn = get_db()
-
-    table_cols = db.table_columns(conn, table_name)
-    if not table_cols:
+    try:
+        columns, rows, total_pages, total_rows = query_paged(
+            conn, table_name, "", [], page, page_size, sort, sort_dir, None
+        )
+    except KeyError:
         conn.close()
         log.warning("Table '%s' not found", table_name)
         return web.json_response({"error": "Table not found"}, status=404)
-
-    order_clause = ""
-    if sort in table_cols and sort_dir in ("asc", "desc"):
-        order_clause = f' ORDER BY {db.quote(sort)} {sort_dir.upper()}'
-
-    total_rows = db.execute(
-        conn, f'SELECT COUNT(*) AS c FROM {db.quote(table_name)}'
-    ).fetchone()["c"]
-    offset = (page - 1) * page_size
-
-    res = db.execute(
-        conn,
-        f'SELECT * FROM {db.quote(table_name)}{order_clause} LIMIT ? OFFSET ?',
-        (page_size, offset),
-    )
-    columns = res.columns
-    rows = res.fetchall()
     conn.close()
 
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
     log.info("Table '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
 
     data = {
@@ -190,29 +205,13 @@ async def api_entity_states(request):
     metadata_id = meta["metadata_id"]
     log.info("Entity '%s' -> metadata_id=%d", entity_id, metadata_id)
 
-    states_cols = db.table_columns(conn, "states")
-    if sort not in states_cols:
-        sort = "last_updated_ts"
-    if sort_dir not in ("asc", "desc"):
-        sort_dir = "desc"
-
-    total_rows = db.execute(
-        conn, "SELECT COUNT(*) AS c FROM states WHERE metadata_id = ?", (metadata_id,)
-    ).fetchone()["c"]
-    log.info("Entity '%s': %d states in total", entity_id, total_rows)
-
-    offset = (page - 1) * page_size
-    res = db.execute(
-        conn,
-        f'SELECT * FROM states WHERE metadata_id = ? '
-        f'ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?',
-        (metadata_id, page_size, offset),
+    columns, rows, total_pages, total_rows = query_paged(
+        conn, "states", " WHERE metadata_id = ?", [metadata_id],
+        page, page_size, sort, sort_dir, "last_updated_ts",
     )
-    columns = res.columns
-    rows = res.fetchall()
     conn.close()
 
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    log.info("Entity '%s': %d states in total", entity_id, total_rows)
     log.info("Entity '%s': returning %d rows (page %d/%d)", entity_id, len(rows), page, total_pages)
 
     data = {
@@ -327,27 +326,12 @@ async def api_statistic_data(request):
 
     metadata_id = meta["id"]
 
-    stat_cols = db.table_columns(conn, table)
-    if sort not in stat_cols:
-        sort = "start_ts"
-    if sort_dir not in ("asc", "desc"):
-        sort_dir = "desc"
-
-    total_rows = db.execute(
-        conn, f'SELECT COUNT(*) AS c FROM {db.quote(table)} WHERE metadata_id = ?', (metadata_id,)
-    ).fetchone()["c"]
-    offset = (page - 1) * page_size
-    res = db.execute(
-        conn,
-        f'SELECT * FROM {db.quote(table)} WHERE metadata_id = ? '
-        f'ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?',
-        (metadata_id, page_size, offset),
+    columns, rows, total_pages, total_rows = query_paged(
+        conn, table, " WHERE metadata_id = ?", [metadata_id],
+        page, page_size, sort, sort_dir, "start_ts",
     )
-    columns = res.columns
-    rows = res.fetchall()
     conn.close()
 
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
     log.info("Statistic '%s': returning %d rows (page %d/%d)", statistic_id, len(rows), page, total_pages)
 
     data = {
