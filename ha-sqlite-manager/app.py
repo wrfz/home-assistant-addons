@@ -81,7 +81,8 @@ async def api_states(request):
     conn = get_db()
     rows = conn.execute(
         """
-        SELECT sm.metadata_id, sm.entity_id, COUNT(s.state_id) AS state_count
+        SELECT sm.metadata_id, sm.entity_id, COUNT(s.state_id) AS state_count,
+               MAX(s.state_id) AS max_state_id
         FROM states_meta sm
         LEFT JOIN states s ON s.metadata_id = sm.metadata_id
         GROUP BY sm.metadata_id, sm.entity_id
@@ -221,7 +222,8 @@ async def api_statistics(request):
     conn = get_db()
     rows = conn.execute(
         """
-        SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count
+        SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count,
+               MAX(s.id) AS max_stat_id
         FROM statistics_meta sm
         LEFT JOIN statistics s ON s.metadata_id = sm.id
         GROUP BY sm.id, sm.statistic_id
@@ -302,7 +304,8 @@ async def api_event_types(request):
     conn = get_db()
     rows = conn.execute(
         """
-        SELECT et.event_type_id, et.event_type, COUNT(e.event_id) AS event_count
+        SELECT et.event_type_id, et.event_type, COUNT(e.event_id) AS event_count,
+               MAX(e.event_id) AS max_event_id
         FROM event_types et
         LEFT JOIN events e ON e.event_type_id = et.event_type_id
         GROUP BY et.event_type_id, et.event_type
