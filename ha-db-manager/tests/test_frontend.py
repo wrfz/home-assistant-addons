@@ -18,8 +18,8 @@ def test_frontend_script_syntax():
 
 def test_frontend_html_loads_external_assets():
     html = HTML.read_text()
-    assert 'src="/static/app.js?v=__APP_VERSION__"' in html
-    assert 'href="/static/style.css?v=__APP_VERSION__"' in html
+    assert 'src="static/app.js?v=__APP_VERSION__"' in html
+    assert 'href="static/style.css?v=__APP_VERSION__"' in html
     assert "<script>" not in html  # no inline JS left behind
     assert "<style>" not in html  # no inline CSS left behind
 
