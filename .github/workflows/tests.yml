@@ -1,0 +1,56 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: hass
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: hass
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -psecret"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r ha-sqlite-manager/requirements-dev.txt
+      - name: Python compile check
+        run: python -m py_compile ha-sqlite-manager/app.py ha-sqlite-manager/db.py
+      - name: Run tests
+        env:
+          HA_TEST_MYSQL_URL: mysql://root:secret@localhost:3307/hass?charset=utf8mb4
+          HA_TEST_PG_URL: postgresql://postgres:secret@localhost:5433/hass
+        run: python -m pytest ha-sqlite-manager -v
+      - name: Frontend syntax check
+        run: |
+          python - <<'EOF'
+          import pathlib, re, subprocess, tempfile
+          html = pathlib.Path("ha-sqlite-manager/static/index.html").read_text()
+          m = re.search(r"<script>(.*)</script>", html, re.S)
+          assert m, "no inline script found"
+          f = tempfile.NamedTemporaryFile(suffix=".js", delete=False)
+          f.write(m.group(1).encode())
+          f.close()
+          subprocess.run(["node", "--check", f.name], check=True)
+          EOF
