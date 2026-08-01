@@ -1,6 +1,6 @@
 name: "HA SQLite Manager"
 description: "View and manage Home Assistant SQLite database tables (states, statistics)"
-version: "0.21.0"
+version: "0.22.0"
 slug: "ha-sqlite-manager"
 url: "https://github.com/wrfz/home-assistant-addons"
 arch:

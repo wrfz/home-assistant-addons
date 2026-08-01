@@ -52,6 +52,10 @@ def parse_int(value, default):
 
 
 async def index(request):
+    version = request.query.get("v")
+    if version != APP_VERSION:
+        log.info("Redirecting to versioned URL (v=%s, was=%s)", APP_VERSION, version)
+        return web.HTTPFound(f"?v={APP_VERSION}")
     log.info("Serving index page (app version %s)", APP_VERSION)
     html = (STATIC_DIR / "index.html").read_text().replace("__APP_VERSION__", APP_VERSION)
     resp = web.Response(text=html, content_type="text/html")
