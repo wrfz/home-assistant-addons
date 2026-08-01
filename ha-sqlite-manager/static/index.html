@@ -84,22 +84,14 @@
         };
 
         const debugEl = document.getElementById('theme-debug');
-        let debugEnabled = false;
+        let debugEnabled = true;
+        debugEl.style.display = 'block';
         function debug(msg) {
             console.log('[theme]', msg);
             if (debugEnabled && debugEl) {
                 debugEl.textContent += msg + '\n';
             }
         }
-        function toggleDebug() {
-            debugEnabled = !debugEnabled;
-            debugEl.style.display = debugEnabled ? 'block' : 'none';
-            debugEl.textContent = '';
-            if (debugEnabled) applyTheme();
-        }
-        document.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) toggleDebug();
-        });
 
         function readVar(parentDoc, name) {
             try {
