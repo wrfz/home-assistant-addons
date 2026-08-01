@@ -1,4 +1,5 @@
 import re
+import os
 import asyncio
 import hashlib
 import sqlite3
@@ -418,7 +419,6 @@ async def api_event_type_data(request):
 
 
 STATS_TABLES = {"statistics", "statistics_short_term"}
-WATCH_INTERVAL = 3
 
 
 def max_id(conn, spec):
@@ -556,7 +556,8 @@ async def ws_handler(request):
 
 async def watch_loop(app):
     while True:
-        await asyncio.sleep(WATCH_INTERVAL)
+        interval = app.get("watch_interval", 3)
+        await asyncio.sleep(interval)
         for key, watch in list(app["watches"].items()):
             if not watch["connections"]:
                 continue
@@ -571,6 +572,59 @@ async def watch_loop(app):
                         await ws.send_json({"type": "reload"})
             except Exception as e:
                 log.warning("Watch check failed: %s", e)
+
+
+def settings_payload(app):
+    return {
+        "watch_interval": app.get("watch_interval", 3),
+        "clients": len(app.get("watch_connections", set())),
+        "views": len(app.get("watches", {})),
+    }
+
+
+SETTINGS_FILE = os.environ.get("HA_SQLITE_SETTINGS_FILE", "/data/settings.json")
+
+
+def load_settings(app):
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            data = json.load(f)
+        interval = parse_int(data.get("watch_interval"), None)
+        if interval and 1 <= interval <= 60:
+            app["watch_interval"] = interval
+            log.info("Loaded watch interval %d s from %s", interval, SETTINGS_FILE)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("Could not load settings from %s: %s", SETTINGS_FILE, e)
+
+
+def save_settings(app):
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump({"watch_interval": app.get("watch_interval", 3)}, f)
+    except Exception as e:
+        log.warning("Could not save settings to %s: %s", SETTINGS_FILE, e)
+
+
+async def api_get_settings(request):
+    return web.json_response(settings_payload(request.app))
+
+
+async def api_set_settings(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    interval = parse_int(body.get("watch_interval"), None)
+    if interval is None or interval < 1 or interval > 60:
+        return web.json_response(
+            {"error": "watch_interval must be between 1 and 60 seconds"}, status=400
+        )
+    request.app["watch_interval"] = interval
+    save_settings(request.app)
+    log.info("Watch interval set to %d s", interval)
+    return web.json_response(settings_payload(request.app))
 
 
 async def start_watch_loop(app):
@@ -588,8 +642,12 @@ def create_app():
     app = web.Application(middlewares=[no_cache_middleware])
     app["watch_connections"] = set()
     app["watches"] = {}
+    app["watch_interval"] = 3
+    load_settings(app)
     app.router.add_get("/", index)
     app.router.add_get("/ws", ws_handler)
+    app.router.add_get("/api/settings", api_get_settings)
+    app.router.add_post("/api/settings", api_set_settings)
     app.router.add_get("/api/tables", api_tables)
     app.router.add_get("/api/states", api_states)
     app.router.add_get("/api/table/{table_name}", api_table)

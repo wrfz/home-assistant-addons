@@ -228,6 +228,7 @@
             setViewSpec(null);
             lastTable = null;
             usageViewActive = false;
+            stopSettingsRefresh();
             document.getElementById('title').textContent = 'HA SQLite Manager';
 
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
@@ -338,6 +339,7 @@
             setBack(showHome);
             lastTable = null;
             usageViewActive = false;
+            stopSettingsRefresh();
             document.getElementById('title').textContent = title;
             showLoading();
             usageData = await api(config.listEndpoint);
@@ -403,6 +405,7 @@
             setViewSpec(null);
             lastTable = null;
             usageViewActive = false;
+            stopSettingsRefresh();
             document.getElementById('title').textContent = 'All Tables';
             showLoading();
             const tables = await api('/api/tables');
@@ -548,11 +551,18 @@
             { value: 'pl-PL', label: 'Polski (pl-PL)' }
         ];
 
+        let settingsRefreshId = null;
+
+        function stopSettingsRefresh() {
+            if (settingsRefreshId) { clearInterval(settingsRefreshId); settingsRefreshId = null; }
+        }
+
         function showSettings() {
             setBack(showHome);
             setViewSpec(null);
             lastTable = null;
             usageViewActive = false;
+            stopSettingsRefresh();
             document.getElementById('title').textContent = 'Settings';
             const opts = localeOptions.map(o =>
                 `<option value="${o.value}" ${o.value === tsLocale ? 'selected' : ''}>${o.label}</option>`
@@ -564,12 +574,51 @@
                 `<select id="ts-locale">${opts}</select>` +
                 '</div>' +
                 `<div class="info">Local uses your browser's language. The other options force a specific language, e.g. Deutsch = "01.08.2026, 12:30:00", US = "8/1/2026, 12:30:00 PM".</div>` +
+                '<div class="settings-row">' +
+                '<label for="live-interval">Live update interval (seconds):</label>' +
+                '<input type="number" id="live-interval" min="1" max="60" value="3">' +
+                `<button class="top-btn" onclick="saveLiveInterval()">Save</button>` +
+                '</div>' +
+                '<div class="info" id="client-info">Loading...</div>' +
                 '</div></div>';
             document.getElementById('ts-locale').addEventListener('change', e => {
                 tsLocale = e.target.value;
                 localStorage.setItem('tsLocale', tsLocale);
                 if (lastTable) renderTablePage(lastTable.data, lastTable.pageCall);
             });
+            refreshSettingsInfo();
+            settingsRefreshId = setInterval(refreshSettingsInfo, 3000);
+        }
+
+        async function refreshSettingsInfo() {
+            try {
+                const s = await api('/api/settings');
+                document.getElementById('live-interval').value = s.watch_interval;
+                document.getElementById('client-info').textContent =
+                    `Active clients: ${s.clients} | watched views: ${s.views}`;
+            } catch (err) {}
+        }
+
+        async function saveLiveInterval() {
+            const val = parseInt(document.getElementById('live-interval').value, 10);
+            if (!val || val < 1 || val > 60) {
+                alert('Interval must be between 1 and 60 seconds');
+                return;
+            }
+            const resp = await fetch(basePath + '/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ watch_interval: val })
+            });
+            const s = await resp.json();
+            if (s.error) {
+                alert('Error: ' + s.error);
+                return;
+            }
+            document.getElementById('live-interval').value = s.watch_interval;
+            document.getElementById('client-info').textContent =
+                `Active clients: ${s.clients} | watched views: ${s.views}`;
+            debug(`live interval saved -> ${s.watch_interval}s`);
         }
 
         function toggleTsMode() {
@@ -606,6 +655,7 @@
         async function showTable(name, page, sortKey, sortDir) {
             setBack(showTables);
             usageViewActive = false;
+            stopSettingsRefresh();
             setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = name;
             showLoading();
@@ -623,6 +673,7 @@
         async function showEntityStates(entity_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('States', statesConfig));
             usageViewActive = false;
+            stopSettingsRefresh();
             setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = entity_id;
             showLoading();
@@ -640,6 +691,7 @@
         async function showStatisticData(statistic_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('Statistics', statisticsConfig));
             usageViewActive = false;
+            stopSettingsRefresh();
             setViewSpec({ kind: 'statistic', table: 'statistics', id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = statistic_id;
             showLoading();
@@ -657,6 +709,7 @@
         async function showEventTypeData(event_type, page, sortKey, sortDir) {
             setBack(() => showUsageView('Events', eventsConfig));
             usageViewActive = false;
+            stopSettingsRefresh();
             setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = event_type;
             showLoading();
