@@ -58,9 +58,16 @@
         .pagination span { padding: 0.4rem 0.8rem; border-radius: 4px; background: var(--app-accent); color: var(--app-accent-text); }
         .container { overflow-x: auto; }
         #back { margin-bottom: 1rem; display: none; }
+        #ts-toggle {
+            position: fixed; top: 0.75rem; right: 0.75rem; z-index: 999;
+            padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer;
+            background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
+        }
+        #ts-toggle:hover { border-color: var(--app-accent); }
     </style>
 </head>
 <body>
+    <button id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
     <div id="back"><a onclick="goBack()">&larr; Back</a></div>
     <h1 id="title">HA SQLite Manager</h1>
     <div id="content"></div>
@@ -303,6 +310,7 @@
         }
 
         function renderTablePage(data, pageCall) {
+            lastTable = { data, pageCall };
             let html = `<div class="info">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>`;
             html += paginationHtml(data, pageCall);
 
@@ -312,8 +320,9 @@
             data.rows.forEach(row => {
                 html += '<tr>';
                 data.columns.forEach(c => {
-                    const val = row[c] !== null ? row[c] : '';
-                    html += `<td title="${String(val).replace(/"/g, '&quot;')}">${val}</td>`;
+                    const raw = row[c] !== null ? row[c] : '';
+                    const display = c.endsWith('_ts') ? formatTs(raw) : raw;
+                    html += `<td title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
                 });
                 html += '</tr>';
             });
@@ -321,6 +330,27 @@
 
             html += paginationHtml(data, pageCall);
             document.getElementById('content').innerHTML = html;
+        }
+
+        let tsMode = 'human';
+        let lastTable = null;
+
+        function toggleTsMode() {
+            tsMode = tsMode === 'human' ? 'raw' : 'human';
+            document.getElementById('ts-toggle').textContent =
+                tsMode === 'human' ? 'Timestamps: Human' : 'Timestamps: Raw';
+            if (lastTable) renderTablePage(lastTable.data, lastTable.pageCall);
+        }
+
+        function formatTs(val) {
+            if (tsMode !== 'human' || val === '') return val;
+            const n = Number(val);
+            if (!isFinite(n) || n === 0) return val;
+            try {
+                return new Date(n * 1000).toLocaleString();
+            } catch (e) {
+                return val;
+            }
         }
 
         async function showTable(name, page) {
