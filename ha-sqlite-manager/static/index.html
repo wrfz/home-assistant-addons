@@ -198,6 +198,7 @@
         async function showHome() {
             setBack(null);
             setViewSpec(null);
+            lastTable = null;
             document.getElementById('title').textContent = 'HA SQLite Manager';
 
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
@@ -258,6 +259,7 @@
         async function showUsageView(title, config) {
             setBack(showHome);
             setViewSpec(null);
+            lastTable = null;
             document.getElementById('title').textContent = title;
             showLoading();
             usageData = await api(config.listEndpoint);
@@ -313,6 +315,7 @@
         async function showTables() {
             setBack(showHome);
             setViewSpec(null);
+            lastTable = null;
             document.getElementById('title').textContent = 'All Tables';
             showLoading();
             const tables = await api('/api/tables');
@@ -323,46 +326,72 @@
         }
 
         function paginationHtml(data, pageCall) {
-            return '<div class="pagination">' +
-                `<button onclick="${pageCall(data.page - 1)}" ${data.page <= 1 ? 'disabled' : ''}>&laquo; Prev</button>` +
+            return `<button onclick="${pageCall(data.page - 1)}" ${data.page <= 1 ? 'disabled' : ''}>&laquo; Prev</button>` +
                 `<span>${data.page}</span>` +
-                `<button onclick="${pageCall(data.page + 1)}" ${data.page >= data.total_pages ? 'disabled' : ''}>Next &raquo;</button>` +
-                '</div>';
+                `<button onclick="${pageCall(data.page + 1)}" ${data.page >= data.total_pages ? 'disabled' : ''}>Next &raquo;</button>`;
         }
 
-        function renderTablePage(data, pageCall, sort, sortAction) {
-            lastTable = { data, pageCall };
-            let html = `<div class="info">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>`;
-            html += paginationHtml(data, pageCall);
+        function buildRows(data) {
+            return data.rows.map(row => {
+                let cells = '';
+                data.columns.forEach(c => {
+                    const raw = row[c] !== null ? row[c] : '';
+                    const display = c.endsWith('_ts') ? formatTs(raw) : raw;
+                    cells += `<td title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
+                });
+                return '<tr>' + cells + '</tr>';
+            }).join('');
+        }
 
-            html += '<div class="container"><table><thead><tr>';
+        function buildThead(data, sort, sortAction) {
+            let thead = '<tr>';
             data.columns.forEach(c => {
                 const isSorted = sort && sort.key === c;
                 const arrow = isSorted ? (sort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
                 const onclick = sortAction
                     ? `onclick="${sortAction(c, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
                     : '';
-                html += `<th style="cursor:pointer" ${onclick}>${c}${arrow}</th>`;
+                thead += `<th style="cursor:pointer" ${onclick}>${c}${arrow}</th>`;
             });
-            html += '</tr></thead><tbody>';
-            data.rows.forEach(row => {
-                html += '<tr>';
-                data.columns.forEach(c => {
-                    const raw = row[c] !== null ? row[c] : '';
-                    const display = c.endsWith('_ts') ? formatTs(raw) : raw;
-                    html += `<td title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
-                });
-                html += '</tr>';
-            });
-            html += '</tbody></table></div>';
+            return thead + '</tr>';
+        }
 
-            html += paginationHtml(data, pageCall);
-            document.getElementById('content').innerHTML = html;
+        function renderTablePage(data, pageCall, sort, sortAction, silentFetch) {
+            lastTable = { data, pageCall, sort, sortAction, silentFetch };
+            document.getElementById('content').innerHTML =
+                `<div class="info" id="info-el">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>` +
+                `<div class="pagination" id="pag-top">${paginationHtml(data, pageCall)}</div>` +
+                '<div class="container"><table><thead id="thead-el">' + buildThead(data, sort, sortAction) + '</thead>' +
+                '<tbody id="tbody-el">' + buildRows(data) + '</tbody></table></div>' +
+                `<div class="pagination" id="pag-bottom">${paginationHtml(data, pageCall)}</div>`;
+        }
+
+        function updateTableInPlace(data, pageCall) {
+            if (!lastTable) return;
+            lastTable.data = data;
+            lastTable.pageCall = pageCall;
+            document.getElementById('info-el').textContent =
+                `${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}`;
+            const pag = paginationHtml(data, pageCall);
+            document.getElementById('pag-top').innerHTML = pag;
+            document.getElementById('pag-bottom').innerHTML = pag;
+            document.getElementById('tbody-el').innerHTML = buildRows(data);
+        }
+
+        async function silentReload() {
+            if (!lastTable || !lastTable.silentFetch) return;
+            const y = window.scrollY;
+            try {
+                const data = await lastTable.silentFetch();
+                if (!lastTable) return;
+                updateTableInPlace(data, lastTable.pageCall);
+            } finally {
+                window.scrollTo(0, y);
+            }
         }
 
         let tsMode = 'human';
         let lastTable = null;
-        let lastReload = null;
         let tsLocale = localStorage.getItem('tsLocale') || 'local';
 
         let liveOn = false;
@@ -370,7 +399,7 @@
         let currentViewSpec = null;
 
         function refresh() {
-            if (lastReload) lastReload();
+            silentReload();
         }
 
         function toggleLive() {
@@ -392,7 +421,7 @@
             ws.onmessage = e => {
                 try {
                     const msg = JSON.parse(e.data);
-                    if (msg.type === 'reload' && lastReload) lastReload();
+                    if (msg.type === 'reload') silentReload();
                 } catch (err) {}
             };
             ws.onclose = () => {
@@ -424,6 +453,7 @@
         function showSettings() {
             setBack(showHome);
             setViewSpec(null);
+            lastTable = null;
             document.getElementById('title').textContent = 'Settings';
             const opts = localeOptions.map(o =>
                 `<option value="${o.value}" ${o.value === tsLocale ? 'selected' : ''}>${o.label}</option>`
@@ -447,7 +477,9 @@
             tsMode = tsMode === 'human' ? 'raw' : 'human';
             document.getElementById('ts-toggle').textContent =
                 tsMode === 'human' ? 'Timestamps: Human' : 'Timestamps: Raw';
-            if (lastTable) renderTablePage(lastTable.data, lastTable.pageCall);
+            if (lastTable) {
+                renderTablePage(lastTable.data, lastTable.pageCall, lastTable.sort, lastTable.sortAction, lastTable.silentFetch);
+            }
         }
 
         function formatTs(val) {
@@ -465,75 +497,73 @@
             }
         }
 
-        async function showTable(name, page, sortKey, sortDir) {
-            setBack(showTables);
-            document.getElementById('title').textContent = name;
-            showLoading();
-            lastReload = () => showTable(name, page, sortKey, sortDir);
-            setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
+        function tableQuery(page, sortKey, sortDir) {
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
-            const data = await api(`/api/table/${encodeURIComponent(name)}?${qs}`);
-            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            return qs;
+        }
+
+        async function showTable(name, page, sortKey, sortDir) {
+            setBack(showTables);
+            setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
+            document.getElementById('title').textContent = name;
+            showLoading();
+            const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(page, sortKey, sortDir)}`);
+            const data = await fetchFn();
             renderTablePage(
                 data,
                 p => `showTable('${name}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
-                sort,
-                (k, d) => `showTable('${name}', 1, '${k}', '${d}')`
+                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
+                (k, d) => `showTable('${name}', 1, '${k}', '${d}')`,
+                fetchFn
             );
         }
 
         async function showEntityStates(entity_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('States', statesConfig));
+            setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = entity_id;
             showLoading();
-            lastReload = () => showEntityStates(entity_id, page, sortKey, sortDir);
-            setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
-            const qs = new URLSearchParams({ page, page_size: 100 });
-            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
-            const data = await api(`/api/entity/${encodeURIComponent(entity_id)}/states?${qs}`);
-            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            const fetchFn = () => api(`/api/entity/${encodeURIComponent(entity_id)}/states?${tableQuery(page, sortKey, sortDir)}`);
+            const data = await fetchFn();
             renderTablePage(
                 data,
                 p => `showEntityStates('${entity_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
-                sort,
-                (k, d) => `showEntityStates('${entity_id}', 1, '${k}', '${d}')`
+                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
+                (k, d) => `showEntityStates('${entity_id}', 1, '${k}', '${d}')`,
+                fetchFn
             );
         }
 
         async function showStatisticData(statistic_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('Statistics', statisticsConfig));
+            setViewSpec({ kind: 'statistic', table: 'statistics', id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = statistic_id;
             showLoading();
-            lastReload = () => showStatisticData(statistic_id, page, sortKey, sortDir);
-            setViewSpec({ kind: 'statistic', table: 'statistics', id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
-            const qs = new URLSearchParams({ page, page_size: 100 });
-            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
-            const data = await api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${qs}`);
-            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            const fetchFn = () => api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${tableQuery(page, sortKey, sortDir)}`);
+            const data = await fetchFn();
             renderTablePage(
                 data,
                 p => `showStatisticData('${statistic_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
-                sort,
-                (k, d) => `showStatisticData('${statistic_id}', 1, '${k}', '${d}')`
+                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
+                (k, d) => `showStatisticData('${statistic_id}', 1, '${k}', '${d}')`,
+                fetchFn
             );
         }
 
         async function showEventTypeData(event_type, page, sortKey, sortDir) {
             setBack(() => showUsageView('Events', eventsConfig));
+            setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = event_type;
             showLoading();
-            lastReload = () => showEventTypeData(event_type, page, sortKey, sortDir);
-            setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
-            const qs = new URLSearchParams({ page, page_size: 100 });
-            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
-            const data = await api(`/api/event-type/${encodeURIComponent(event_type)}/data?${qs}`);
-            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            const fetchFn = () => api(`/api/event-type/${encodeURIComponent(event_type)}/data?${tableQuery(page, sortKey, sortDir)}`);
+            const data = await fetchFn();
             renderTablePage(
                 data,
                 p => `showEventTypeData('${event_type}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
-                sort,
-                (k, d) => `showEventTypeData('${event_type}', 1, '${k}', '${d}')`
+                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
+                (k, d) => `showEventTypeData('${event_type}', 1, '${k}', '${d}')`,
+                fetchFn
             );
         }
 
