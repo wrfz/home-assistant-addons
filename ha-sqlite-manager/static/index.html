@@ -3,47 +3,59 @@
 <head>
     <title>HA SQLite Manager</title>
     <style>
-        body { font-family: system-ui, sans-serif; margin: 2rem; background: #1c1c1c; color: #e0e0e0; }
-        h1 { color: #03a9f4; }
-        a { color: #03a9f4; text-decoration: none; cursor: pointer; }
+        :root {
+            --app-bg: #1c1c1c;
+            --app-text: #e0e0e0;
+            --app-text-secondary: #999;
+            --app-accent: #03a9f4;
+            --app-accent-text: #000;
+            --app-card-bg: #2d2d2d;
+            --app-card-bg-hover: #2a2a2a;
+            --app-header-bg: #333;
+            --app-border: #444;
+            --app-border-strong: #555;
+        }
+        body { font-family: system-ui, sans-serif; margin: 2rem; background: var(--app-bg); color: var(--app-text); }
+        h1 { color: var(--app-accent); }
+        a { color: var(--app-accent); text-decoration: none; cursor: pointer; }
         a:hover { text-decoration: underline; }
         .menu-section { margin-bottom: 2rem; }
-        .menu-section h2 { color: #999; text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.08em; margin-bottom: 0.5rem; }
+        .menu-section h2 { color: var(--app-text-secondary); text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.08em; margin-bottom: 0.5rem; }
         .button-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
         .nav-button {
-            background: #2d2d2d; border-radius: 8px; padding: 1.25rem;
-            color: #e0e0e0; border: 1px solid #444; font-size: 1rem;
+            background: var(--app-card-bg); border-radius: 8px; padding: 1.25rem;
+            color: var(--app-text); border: 1px solid var(--app-border); font-size: 1rem;
             transition: border-color 0.2s; cursor: pointer; text-align: center;
         }
-        .nav-button:hover { border-color: #03a9f4; }
+        .nav-button:hover { border-color: var(--app-accent); }
         .table-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
         .table-card {
-            background: #2d2d2d; border-radius: 8px; padding: 1rem;
-            color: #e0e0e0; border: 1px solid #444;
+            background: var(--app-card-bg); border-radius: 8px; padding: 1rem;
+            color: var(--app-text); border: 1px solid var(--app-border);
             transition: border-color 0.2s; cursor: pointer;
         }
-        .table-card:hover { border-color: #03a9f4; }
-        .table-card h3 { margin: 0; color: #03a9f4; }
-        .info { color: #999; margin-bottom: 1rem; }
-        .loading { display: flex; align-items: center; gap: 0.75rem; padding: 2rem 0; color: #999; }
+        .table-card:hover { border-color: var(--app-accent); }
+        .table-card h3 { margin: 0; color: var(--app-accent); }
+        .info { color: var(--app-text-secondary); margin-bottom: 1rem; }
+        .loading { display: flex; align-items: center; gap: 0.75rem; padding: 2rem 0; color: var(--app-text-secondary); }
         .spinner {
             width: 28px; height: 28px; border-radius: 50%;
-            border: 3px solid #444; border-top-color: #03a9f4;
+            border: 3px solid var(--app-border); border-top-color: var(--app-accent);
             animation: spin 0.8s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
-        th, td { border: 1px solid #444; padding: 0.4rem 0.6rem; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        th { background: #333; position: sticky; top: 0; }
-        tr:hover { background: #2a2a2a; }
+        th, td { border: 1px solid var(--app-border); padding: 0.4rem 0.6rem; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        th { background: var(--app-header-bg); position: sticky; top: 0; }
+        tr:hover { background: var(--app-card-bg-hover); }
         .pagination { margin: 1rem 0; display: flex; gap: 0.5rem; align-items: center; }
         .pagination button {
-            padding: 0.4rem 0.8rem; border-radius: 4px; background: #333;
-            border: 1px solid #555; color: #e0e0e0; cursor: pointer;
+            padding: 0.4rem 0.8rem; border-radius: 4px; background: var(--app-header-bg);
+            border: 1px solid var(--app-border-strong); color: var(--app-text); cursor: pointer;
         }
-        .pagination button:hover { border-color: #03a9f4; }
+        .pagination button:hover { border-color: var(--app-accent); }
         .pagination button:disabled { opacity: 0.4; cursor: default; }
-        .pagination span { padding: 0.4rem 0.8rem; border-radius: 4px; background: #03a9f4; color: #000; }
+        .pagination span { padding: 0.4rem 0.8rem; border-radius: 4px; background: var(--app-accent); color: var(--app-accent-text); }
         .container { overflow-x: auto; }
         #back { margin-bottom: 1rem; display: none; }
     </style>
@@ -56,6 +68,40 @@
     <script>
         const basePath = location.pathname.replace(/\/$/, '');
         let backAction = null;
+
+        const themeMap = {
+            '--app-accent': '--primary-color',
+            '--app-accent-text': '--text-primary-color',
+            '--app-bg': '--primary-background-color',
+            '--app-text': '--primary-text-color',
+            '--app-text-secondary': '--secondary-text-color',
+            '--app-card-bg': '--card-background-color',
+            '--app-card-bg-hover': '--card-background-color',
+            '--app-header-bg': '--table-row-background-color',
+            '--app-border': '--divider-color',
+            '--app-border-strong': '--divider-color'
+        };
+
+        function applyTheme() {
+            const root = document.documentElement;
+            try {
+                const ha = window.parent.document.querySelector('home-assistant');
+                if (!ha) return;
+                const cs = getComputedStyle(ha);
+                for (const [target, source] of Object.entries(themeMap)) {
+                    const val = cs.getPropertyValue(source).trim();
+                    if (val) root.style.setProperty(target, val);
+                }
+            } catch (e) {}
+        }
+
+        try {
+            const ha = window.parent.document.querySelector('home-assistant');
+            if (ha) {
+                applyTheme();
+                new MutationObserver(applyTheme).observe(ha, { attributes: true, attributeFilter: ['class', 'style'] });
+            }
+        } catch (e) {}
 
         async function api(path) {
             const resp = await fetch(basePath + path);
