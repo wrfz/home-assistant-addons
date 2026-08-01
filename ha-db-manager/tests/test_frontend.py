@@ -34,3 +34,16 @@ def test_frontend_has_short_term_usage():
     assert "statisticsShortTermConfig" in appjs
     assert "/api/statistics-short-term" in appjs
     assert "statistics_short_term" in appjs
+
+
+def test_frontend_async_views_guard_against_stale_renders():
+    appjs = APPJS.read_text()
+    assert "function beginView()" in appjs
+    assert "function isCurrentView(gen)" in appjs
+    # every async view that fetches then renders must bump the generation
+    # and bail out if a newer view started while awaiting.
+    for view in ("showHome", "showUsageView", "showTables", "showTable",
+                 "showEntityStates", "showStatisticData", "showEventTypeData"):
+        assert f"async function {view}(" in appjs
+        assert "beginView()" in appjs
+    assert appjs.count("isCurrentView(gen)") >= 5

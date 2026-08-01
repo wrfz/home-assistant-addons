@@ -109,6 +109,7 @@
         }
 
         async function showHome() {
+            beginView();
             setBack(null);
             setViewSpec(null);
             lastTable = null;
@@ -209,8 +210,10 @@
 
         async function usageReload() {
             if (!usageConfig) return;
+            const gen = viewGen;
             try {
                 const data = await api(usageConfig.listEndpoint + '?since=' + usageGlobalBaseline);
+                if (!isCurrentView(gen) || !usageConfig) return;
                 let changed = data.length !== usageData.length;
                 if (!changed) {
                     for (let i = 0; i < data.length; i++) {
@@ -237,6 +240,7 @@
         }
 
         async function showUsageView(title, config) {
+            const gen = beginView();
             setBack(showHome);
             lastTable = null;
             usageViewActive = false;
@@ -244,6 +248,7 @@
             document.getElementById('title').textContent = title;
             showLoading();
             usageData = await api(config.listEndpoint);
+            if (!isCurrentView(gen)) return;
             usageConfig = config;
             usageSortKey = config.sortKey;
             usageSortDir = 'asc';
@@ -302,6 +307,7 @@
         }
 
         async function showTables() {
+            const gen = beginView();
             setBack(showHome);
             setViewSpec(null);
             lastTable = null;
@@ -310,6 +316,7 @@
             document.getElementById('title').textContent = 'All Tables';
             showLoading();
             const tables = await api('/api/tables');
+            if (!isCurrentView(gen)) return;
             const html = '<div class="table-list">' +
                 tables.map(t => `<div class="table-card" onclick="showTable('${t}', 1)"><h3>${t}</h3></div>`).join('') +
                 '</div>';
@@ -371,10 +378,11 @@
 
         async function silentReload() {
             if (!lastTable || !lastTable.silentFetch) return;
+            const gen = viewGen;
             const y = window.scrollY;
             try {
                 const data = await lastTable.silentFetch();
-                if (!lastTable) return;
+                if (!isCurrentView(gen) || !lastTable) return;
                 updateTableInPlace(data, lastTable.pageCall);
             } finally {
                 window.scrollTo(0, y);
@@ -384,6 +392,16 @@
         let tsMode = 'human';
         let lastTable = null;
         let tsLocale = localStorage.getItem('tsLocale') || 'local';
+
+        let viewGen = 0;
+
+        function beginView() {
+            return ++viewGen;
+        }
+
+        function isCurrentView(gen) {
+            return gen === viewGen;
+        }
 
         let liveOn = false;
         let ws = null;
@@ -459,6 +477,7 @@
         }
 
         function showSettings() {
+            beginView();
             setBack(showHome);
             setViewSpec(null);
             lastTable = null;
@@ -492,8 +511,10 @@
         }
 
         async function refreshSettingsInfo() {
+            const gen = viewGen;
             try {
                 const s = await api('/api/settings');
+                if (!isCurrentView(gen)) return;
                 document.getElementById('live-interval').value = s.watch_interval;
                 document.getElementById('client-info').textContent =
                     `Active clients: ${s.clients} | watched views: ${s.views}`;
@@ -554,6 +575,7 @@
         }
 
         async function showTable(name, page, sortKey, sortDir) {
+            const gen = beginView();
             setBack(showTables);
             usageViewActive = false;
             stopSettingsRefresh();
@@ -562,6 +584,7 @@
             showLoading();
             const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(page, sortKey, sortDir)}`);
             const data = await fetchFn();
+            if (!isCurrentView(gen)) return;
             renderTablePage(
                 data,
                 p => `showTable('${name}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
@@ -572,6 +595,7 @@
         }
 
         async function showEntityStates(entity_id, page, sortKey, sortDir) {
+            const gen = beginView();
             setBack(() => showUsageView('States', statesConfig));
             usageViewActive = false;
             stopSettingsRefresh();
@@ -580,6 +604,7 @@
             showLoading();
             const fetchFn = () => api(`/api/entity/${encodeURIComponent(entity_id)}/states?${tableQuery(page, sortKey, sortDir)}`);
             const data = await fetchFn();
+            if (!isCurrentView(gen)) return;
             renderTablePage(
                 data,
                 p => `showEntityStates('${entity_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
@@ -592,6 +617,7 @@
         async function showStatisticData(statistic_id, page, sortKey, sortDir, shortTerm) {
             const table = shortTerm ? 'statistics_short_term' : 'statistics';
             const config = shortTerm ? statisticsShortTermConfig : statisticsConfig;
+            const gen = beginView();
             setBack(() => showUsageView(shortTerm ? 'Statistics Short Term' : 'Statistics', config));
             usageViewActive = false;
             stopSettingsRefresh();
@@ -600,6 +626,7 @@
             showLoading();
             const fetchFn = () => api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${tableQuery(page, sortKey, sortDir)}${shortTerm ? '&short_term=1' : ''}`);
             const data = await fetchFn();
+            if (!isCurrentView(gen)) return;
             renderTablePage(
                 data,
                 p => `showStatisticData('${statistic_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}', ${shortTerm ? 'true' : 'false'})`,
@@ -610,6 +637,7 @@
         }
 
         async function showEventTypeData(event_type, page, sortKey, sortDir) {
+            const gen = beginView();
             setBack(() => showUsageView('Events', eventsConfig));
             usageViewActive = false;
             stopSettingsRefresh();
@@ -618,6 +646,7 @@
             showLoading();
             const fetchFn = () => api(`/api/event-type/${encodeURIComponent(event_type)}/data?${tableQuery(page, sortKey, sortDir)}`);
             const data = await fetchFn();
+            if (!isCurrentView(gen)) return;
             renderTablePage(
                 data,
                 p => `showEventTypeData('${event_type}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
