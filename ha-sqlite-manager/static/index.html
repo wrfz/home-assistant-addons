@@ -65,23 +65,23 @@
             background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
         }
         #back { margin-bottom: 1rem; display: none; }
-        #ts-toggle {
+        .top-btn {
+            padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer;
+            background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
+        }
+        .top-btn:hover { border-color: var(--app-accent); }
+        #top-buttons {
             position: fixed; top: 0.75rem; right: 0.75rem; z-index: 999;
-            padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer;
-            background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
+            display: flex; gap: 0.5rem;
         }
-        #ts-toggle:hover { border-color: var(--app-accent); }
-        #refresh-btn {
-            position: fixed; top: 0.75rem; right: 11.5rem; z-index: 999;
-            padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer;
-            background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
-        }
-        #refresh-btn:hover { border-color: var(--app-accent); }
     </style>
 </head>
 <body>
-    <button id="refresh-btn" onclick="refresh()">&#8635; Refresh</button>
-    <button id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
+    <div id="top-buttons">
+        <button class="top-btn" id="live-toggle" onclick="toggleLive()">Live: Off</button>
+        <button class="top-btn" onclick="refresh()">&#8635; Refresh</button>
+        <button class="top-btn" id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
+    </div>
     <div id="back"><a onclick="goBack()">&larr; Back</a></div>
     <h1 id="title">HA SQLite Manager</h1>
     <div id="content"></div>
@@ -197,6 +197,7 @@
 
         async function showHome() {
             setBack(null);
+            setViewSpec(null);
             document.getElementById('title').textContent = 'HA SQLite Manager';
 
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
@@ -256,6 +257,7 @@
 
         async function showUsageView(title, config) {
             setBack(showHome);
+            setViewSpec(null);
             document.getElementById('title').textContent = title;
             showLoading();
             usageData = await api(config.listEndpoint);
@@ -310,6 +312,7 @@
 
         async function showTables() {
             setBack(showHome);
+            setViewSpec(null);
             document.getElementById('title').textContent = 'All Tables';
             showLoading();
             const tables = await api('/api/tables');
@@ -362,8 +365,47 @@
         let lastReload = null;
         let tsLocale = localStorage.getItem('tsLocale') || 'local';
 
+        let liveOn = false;
+        let ws = null;
+        let currentViewSpec = null;
+
         function refresh() {
             if (lastReload) lastReload();
+        }
+
+        function toggleLive() {
+            liveOn = !liveOn;
+            document.getElementById('live-toggle').textContent = liveOn ? 'Live: On' : 'Live: Off';
+            if (liveOn) {
+                connectWs();
+            } else {
+                if (ws) { ws.close(); ws = null; }
+            }
+        }
+
+        function connectWs() {
+            const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+            ws = new WebSocket(proto + location.host + basePath + '/ws');
+            ws.onopen = () => {
+                if (currentViewSpec) ws.send(JSON.stringify({ type: 'watch', view: currentViewSpec }));
+            };
+            ws.onmessage = e => {
+                try {
+                    const msg = JSON.parse(e.data);
+                    if (msg.type === 'reload' && lastReload) lastReload();
+                } catch (err) {}
+            };
+            ws.onclose = () => {
+                ws = null;
+                if (liveOn) setTimeout(connectWs, 2000);
+            };
+        }
+
+        function setViewSpec(spec) {
+            currentViewSpec = spec;
+            if (liveOn && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'watch', view: spec }));
+            }
         }
 
         const localeOptions = [
@@ -381,6 +423,7 @@
 
         function showSettings() {
             setBack(showHome);
+            setViewSpec(null);
             document.getElementById('title').textContent = 'Settings';
             const opts = localeOptions.map(o =>
                 `<option value="${o.value}" ${o.value === tsLocale ? 'selected' : ''}>${o.label}</option>`
@@ -427,6 +470,7 @@
             document.getElementById('title').textContent = name;
             showLoading();
             lastReload = () => showTable(name, page, sortKey, sortDir);
+            setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/table/${encodeURIComponent(name)}?${qs}`);
@@ -444,6 +488,7 @@
             document.getElementById('title').textContent = entity_id;
             showLoading();
             lastReload = () => showEntityStates(entity_id, page, sortKey, sortDir);
+            setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/entity/${encodeURIComponent(entity_id)}/states?${qs}`);
@@ -461,6 +506,7 @@
             document.getElementById('title').textContent = statistic_id;
             showLoading();
             lastReload = () => showStatisticData(statistic_id, page, sortKey, sortDir);
+            setViewSpec({ kind: 'statistic', table: 'statistics', id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${qs}`);
@@ -478,6 +524,7 @@
             document.getElementById('title').textContent = event_type;
             showLoading();
             lastReload = () => showEventTypeData(event_type, page, sortKey, sortDir);
+            setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/event-type/${encodeURIComponent(event_type)}/data?${qs}`);

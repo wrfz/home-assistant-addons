@@ -1,4 +1,6 @@
 import re
+import asyncio
+import hashlib
 import sqlite3
 import json
 import logging
@@ -376,6 +378,139 @@ async def api_event_type_data(request):
     )
 
 
+STATS_TABLES = {"statistics", "statistics_short_term"}
+WATCH_INTERVAL = 3
+
+
+def max_id(conn, spec):
+    kind = spec.get("kind")
+    if kind == "entity":
+        row = conn.execute(
+            "SELECT MAX(state_id) AS m FROM states WHERE metadata_id = "
+            "(SELECT metadata_id FROM states_meta WHERE entity_id = ?)",
+            (spec.get("id"),),
+        ).fetchone()
+    elif kind == "statistic":
+        row = conn.execute(
+            "SELECT MAX(id) AS m FROM statistics WHERE metadata_id = "
+            "(SELECT id FROM statistics_meta WHERE statistic_id = ?)",
+            (spec.get("id"),),
+        ).fetchone()
+    elif kind == "event":
+        row = conn.execute(
+            "SELECT MAX(event_id) AS m FROM events WHERE event_type_id = "
+            "(SELECT event_type_id FROM event_types WHERE event_type = ?)",
+            (spec.get("id"),),
+        ).fetchone()
+    else:
+        row = conn.execute(f'SELECT MAX(rowid) AS m FROM "{spec.get("table")}"').fetchone()
+    return row["m"] if row and row["m"] is not None else 0
+
+
+def page_signature(conn, spec):
+    kind = spec.get("kind")
+    table = spec.get("table")
+    if kind == "entity":
+        where, params = (
+            " WHERE metadata_id = (SELECT metadata_id FROM states_meta WHERE entity_id = ?)",
+            [spec.get("id")],
+        )
+    elif kind == "statistic":
+        where, params = (
+            " WHERE metadata_id = (SELECT id FROM statistics_meta WHERE statistic_id = ?)",
+            [spec.get("id")],
+        )
+    elif kind == "event":
+        where, params = (
+            " WHERE event_type_id = (SELECT event_type_id FROM event_types WHERE event_type = ?)",
+            [spec.get("id")],
+        )
+    elif kind == "table":
+        where, params = "", []
+    else:
+        return None
+
+    sort = spec.get("sort")
+    sort_dir = spec.get("dir") or "asc"
+    table_cols = {r["name"] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+    order_clause = ""
+    if sort in table_cols and sort_dir in ("asc", "desc"):
+        order_clause = f' ORDER BY "{sort}" {sort_dir.upper()}'
+
+    page = parse_int(spec.get("page"), 1)
+    page_size = parse_int(spec.get("page_size"), 100)
+    total = conn.execute(
+        f'SELECT COUNT(*) AS c FROM "{table}"{where}', params
+    ).fetchone()["c"]
+    offset = (page - 1) * page_size
+    rows = conn.execute(
+        f'SELECT * FROM "{table}"{where}{order_clause} LIMIT ? OFFSET ?',
+        params + [page_size, offset],
+    ).fetchall()
+    payload = json.dumps([total] + [dict(r) for r in rows], cls=SafeEncoder, sort_keys=True)
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+
+def check_view_changed(conn, spec, state):
+    is_stats = spec.get("kind") == "statistic" or spec.get("table") in STATS_TABLES
+    mid = max_id(conn, spec)
+    sig = page_signature(conn, spec) if is_stats else None
+    changed = state["max_id"] is not None and mid != state["max_id"]
+    if is_stats and state["sig"] is not None and sig != state["sig"]:
+        changed = True
+    state["max_id"] = mid
+    state["sig"] = sig
+    return changed
+
+
+async def ws_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    ws["watch"] = None
+    ws["state"] = {"max_id": None, "sig": None}
+    request.app["watch_connections"].add(ws)
+    log.info("WebSocket client connected (%d active)", len(request.app["watch_connections"]))
+    try:
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("type") == "watch":
+                    view = data.get("view")
+                    ws["watch"] = view
+                    ws["state"] = {"max_id": None, "sig": None}
+                    log.info("Watch view set: %s", view)
+    finally:
+        request.app["watch_connections"].discard(ws)
+        log.info("WebSocket client disconnected (%d active)", len(request.app["watch_connections"]))
+    return ws
+
+
+async def watch_loop(app):
+    while True:
+        await asyncio.sleep(WATCH_INTERVAL)
+        for ws in list(app["watch_connections"]):
+            spec = ws.get("watch")
+            if not spec:
+                continue
+            try:
+                conn = get_db()
+                try:
+                    changed = check_view_changed(conn, spec, ws["state"])
+                finally:
+                    conn.close()
+                if changed:
+                    await ws.send_json({"type": "reload"})
+            except Exception as e:
+                log.warning("Watch check failed: %s", e)
+
+
+async def start_watch_loop(app):
+    app["watch_task"] = asyncio.get_running_loop().create_task(watch_loop(app))
+
+
 @web.middleware
 async def no_cache_middleware(request, handler):
     resp = await handler(request)
@@ -385,7 +520,9 @@ async def no_cache_middleware(request, handler):
 
 def create_app():
     app = web.Application(middlewares=[no_cache_middleware])
+    app["watch_connections"] = set()
     app.router.add_get("/", index)
+    app.router.add_get("/ws", ws_handler)
     app.router.add_get("/api/tables", api_tables)
     app.router.add_get("/api/states", api_states)
     app.router.add_get("/api/table/{table_name}", api_table)
@@ -394,6 +531,7 @@ def create_app():
     app.router.add_get("/api/statistic/{statistic_id}/data", api_statistic_data)
     app.router.add_get("/api/event-types", api_event_types)
     app.router.add_get("/api/event-type/{event_type}/data", api_event_type_data)
+    app.on_startup.append(start_watch_loop)
     return app
 
 
