@@ -78,6 +78,7 @@ async def api_tables(request):
 
 async def api_states(request):
     log.info("Listing entities with state counts")
+    since = parse_int(request.query.get("since"), -1)
     conn = get_db()
     rows = conn.execute(
         """
@@ -89,9 +90,20 @@ async def api_states(request):
         ORDER BY sm.entity_id
         """
     ).fetchall()
-    conn.close()
-    log.info("Found %d entities", len(rows))
     data = [dict(r) for r in rows]
+    if since >= 0:
+        new_counts = {
+            r["metadata_id"]: r["new_count"]
+            for r in conn.execute(
+                "SELECT metadata_id, COUNT(*) AS new_count "
+                "FROM states WHERE state_id > ? GROUP BY metadata_id",
+                (since,),
+            ).fetchall()
+        }
+        for r in data:
+            r["new_count"] = new_counts.get(r["metadata_id"], 0)
+    conn.close()
+    log.info("Found %d entities", len(data))
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
@@ -219,6 +231,7 @@ async def api_entity_states(request):
 
 async def api_statistics(request):
     log.info("Listing statistics entities with counts")
+    since = parse_int(request.query.get("since"), -1)
     conn = get_db()
     rows = conn.execute(
         """
@@ -230,9 +243,20 @@ async def api_statistics(request):
         ORDER BY sm.statistic_id
         """
     ).fetchall()
-    conn.close()
-    log.info("Found %d statistics", len(rows))
     data = [dict(r) for r in rows]
+    if since >= 0:
+        new_counts = {
+            r["metadata_id"]: r["new_count"]
+            for r in conn.execute(
+                "SELECT metadata_id, COUNT(*) AS new_count "
+                "FROM statistics WHERE id > ? GROUP BY metadata_id",
+                (since,),
+            ).fetchall()
+        }
+        for r in data:
+            r["new_count"] = new_counts.get(r["metadata_id"], 0)
+    conn.close()
+    log.info("Found %d statistics", len(data))
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
@@ -301,6 +325,7 @@ async def api_statistic_data(request):
 
 async def api_event_types(request):
     log.info("Listing event types with counts")
+    since = parse_int(request.query.get("since"), -1)
     conn = get_db()
     rows = conn.execute(
         """
@@ -312,9 +337,20 @@ async def api_event_types(request):
         ORDER BY et.event_type
         """
     ).fetchall()
-    conn.close()
-    log.info("Found %d event types", len(rows))
     data = [dict(r) for r in rows]
+    if since >= 0:
+        new_counts = {
+            r["event_type_id"]: r["new_count"]
+            for r in conn.execute(
+                "SELECT event_type_id, COUNT(*) AS new_count "
+                "FROM events WHERE event_id > ? GROUP BY event_type_id",
+                (since,),
+            ).fetchall()
+        }
+        for r in data:
+            r["new_count"] = new_counts.get(r["event_type_id"], 0)
+    conn.close()
+    log.info("Found %d event types", len(data))
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",

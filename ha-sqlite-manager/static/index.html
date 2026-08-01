@@ -70,6 +70,10 @@
             background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
         }
         .top-btn:hover { border-color: var(--app-accent); }
+        #live-toggle.live-on {
+            background: #1b5e20; border-color: #2e7d32; color: #fff;
+        }
+        #live-toggle.live-on:hover { border-color: #66bb6a; }
         #top-buttons {
             position: fixed; top: 0.75rem; right: 0.75rem; z-index: 999;
             display: flex; gap: 0.5rem;
@@ -291,7 +295,7 @@
             ]
         };
 
-        let usageBaseline = {};
+        let usageGlobalBaseline = 0;
         let usagePollId = null;
         let usageViewActive = false;
 
@@ -305,20 +309,18 @@
         }
 
         function usageValue(e, key) {
-            if (key === '__new__') {
-                return Math.max(0, (e[usageConfig.childMaxKey] || 0) - (usageBaseline[e[usageConfig.idKey]] || 0));
-            }
+            if (key === '__new__') return e['new_count'] || 0;
             return e[key];
         }
 
         async function pollUsage() {
             if (!usageConfig) return;
             try {
-                const data = await api(usageConfig.listEndpoint);
+                const data = await api(usageConfig.listEndpoint + '?since=' + usageGlobalBaseline);
                 let changed = data.length !== usageData.length;
                 if (!changed) {
                     for (let i = 0; i < data.length; i++) {
-                        if ((data[i][usageConfig.childMaxKey] || 0) !== (usageData[i][usageConfig.childMaxKey] || 0)) {
+                        if ((data[i]['new_count'] || 0) !== (usageData[i]['new_count'] || 0)) {
                             changed = true;
                             break;
                         }
@@ -331,8 +333,7 @@
                         .map(e => ({
                             id: e[usageConfig.idKey],
                             max: e[usageConfig.childMaxKey],
-                            base: usageBaseline[e[usageConfig.idKey]] || 0,
-                            new: usageValue(e, '__new__')
+                            new: e['new_count'] || 0
                         }))
                         .sort((a, b) => b.new - a.new)
                         .slice(0, 3);
@@ -352,13 +353,11 @@
             usageConfig = config;
             usageSortKey = config.sortKey;
             usageSortDir = 'asc';
-            usageBaseline = {};
-            usageData.forEach(e => { usageBaseline[e[config.idKey]] = e[config.childMaxKey] || 0; });
-            debug(`usage open '${title}': ${usageData.length} rows | sample ` +
+            usageGlobalBaseline = usageData.reduce((m, e) => Math.max(m, e[config.childMaxKey] || 0), 0);
+            debug(`usage open '${title}': ${usageData.length} rows | globalBaseline=${usageGlobalBaseline} | sample ` +
                 JSON.stringify(usageData.slice(0, 3).map(e => ({
                     id: e[config.idKey],
-                    max: e[config.childMaxKey],
-                    base: usageBaseline[e[config.idKey]]
+                    max: e[config.childMaxKey]
                 }))));
             renderUsage();
             usageViewActive = true;
@@ -497,12 +496,15 @@
         let currentViewSpec = null;
 
         function refresh() {
+            debug('refresh button pressed');
             silentReload();
         }
 
         function toggleLive() {
             liveOn = !liveOn;
             document.getElementById('live-toggle').textContent = liveOn ? 'Live: On' : 'Live: Off';
+            document.getElementById('live-toggle').classList.toggle('live-on', liveOn);
+            debug(`live button pressed -> ${liveOn ? 'on' : 'off'}`);
             if (liveOn) {
                 if (usageViewActive) startUsagePoll();
                 connectWs();
@@ -579,6 +581,7 @@
             tsMode = tsMode === 'human' ? 'raw' : 'human';
             document.getElementById('ts-toggle').textContent =
                 tsMode === 'human' ? 'Timestamps: Human' : 'Timestamps: Raw';
+            debug(`timestamps button pressed -> ${tsMode === 'human' ? 'human' : 'raw'}`);
             if (lastTable) {
                 renderTablePage(lastTable.data, lastTable.pageCall, lastTable.sort, lastTable.sortAction, lastTable.silentFetch);
             }
