@@ -71,9 +71,16 @@
             background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
         }
         #ts-toggle:hover { border-color: var(--app-accent); }
+        #refresh-btn {
+            position: fixed; top: 0.75rem; right: 11.5rem; z-index: 999;
+            padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer;
+            background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
+        }
+        #refresh-btn:hover { border-color: var(--app-accent); }
     </style>
 </head>
 <body>
+    <button id="refresh-btn" onclick="refresh()">&#8635; Refresh</button>
     <button id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
     <div id="back"><a onclick="goBack()">&larr; Back</a></div>
     <h1 id="title">HA SQLite Manager</h1>
@@ -352,7 +359,12 @@
 
         let tsMode = 'human';
         let lastTable = null;
+        let lastReload = null;
         let tsLocale = localStorage.getItem('tsLocale') || 'local';
+
+        function refresh() {
+            if (lastReload) lastReload();
+        }
 
         const localeOptions = [
             { value: 'local', label: 'Local (Browser default)' },
@@ -414,6 +426,7 @@
             setBack(showTables);
             document.getElementById('title').textContent = name;
             showLoading();
+            lastReload = () => showTable(name, page, sortKey, sortDir);
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/table/${encodeURIComponent(name)}?${qs}`);
@@ -430,6 +443,7 @@
             setBack(() => showUsageView('States', statesConfig));
             document.getElementById('title').textContent = entity_id;
             showLoading();
+            lastReload = () => showEntityStates(entity_id, page, sortKey, sortDir);
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/entity/${encodeURIComponent(entity_id)}/states?${qs}`);
@@ -446,6 +460,7 @@
             setBack(() => showUsageView('Statistics', statisticsConfig));
             document.getElementById('title').textContent = statistic_id;
             showLoading();
+            lastReload = () => showStatisticData(statistic_id, page, sortKey, sortDir);
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${qs}`);
@@ -462,6 +477,7 @@
             setBack(() => showUsageView('Events', eventsConfig));
             document.getElementById('title').textContent = event_type;
             showLoading();
+            lastReload = () => showEventTypeData(event_type, page, sortKey, sortDir);
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
             const data = await api(`/api/event-type/${encodeURIComponent(event_type)}/data?${qs}`);
