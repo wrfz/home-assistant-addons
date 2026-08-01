@@ -107,7 +107,7 @@
         const debugEl = document.getElementById('theme-debug');
         let debugEnabled = false;
         function debug(msg) {
-            console.log('[theme]', msg);
+            console.log('[dbg]', msg);
             if (debugEnabled && debugEl) {
                 debugEl.textContent += msg + '\n';
             }
@@ -115,7 +115,7 @@
         function toggleDebug() {
             debugEnabled = !debugEnabled;
             debugEl.style.display = debugEnabled ? 'block' : 'none';
-            debugEl.textContent = 'DBG-v5 app=v' + '__APP_VERSION__' + '\n';
+            debugEl.textContent = 'DBG-v6 app=v' + '__APP_VERSION__' + '\n';
             if (debugEnabled) applyTheme();
         }
         document.getElementById('title').addEventListener('click', toggleDebug);
@@ -123,42 +123,25 @@
         function readVar(parentDoc, name) {
             try {
                 const inline = parentDoc.documentElement.style.getPropertyValue(name).trim();
-                debug(`readVar(${name}) inline -> '${inline}'`);
                 if (inline) return inline;
                 const el = parentDoc.createElement('div');
                 el.style.cssText = 'position:fixed;color:var(' + name + ', inherit);';
                 parentDoc.body.appendChild(el);
                 const val = getComputedStyle(el).color;
                 el.remove();
-                debug(`readVar(${name}) computed -> '${val}'`);
                 return val && val !== 'rgba(0, 0, 0, 0)' ? val : '';
             } catch (e) {
-                debug(`readVar(${name}) error: ${e.message}`);
                 return '';
             }
         }
 
         function applyTheme() {
-            debug('applyTheme() called');
             if (window.parent === window) {
-                debug('no parent (direct access), skip');
                 return;
             }
             const root = document.documentElement;
             try {
                 const parentDoc = window.parent.document;
-                debug(`parent inline style props: ${parentDoc.documentElement.style.length}`);
-                debug(`parent cssText prefix: ${parentDoc.documentElement.style.cssText.slice(0, 200)}`);
-                const ha = parentDoc.querySelector('home-assistant');
-                debug(`home-assistant: ${ha ? 'found' : 'NOT found'}`);
-                if (ha) {
-                    debug(`ha.hass present: ${!!ha.hass}`);
-                    if (ha.hass) {
-                        debug(`selectedTheme: ${JSON.stringify(ha.hass.selectedTheme)}`);
-                        const themes = ha.hass.themes;
-                        debug(`themes.darkMode: ${themes ? themes.darkMode : 'n/a'}, themes registry: ${themes ? Object.keys(themes.themes || {}).length : 'n/a'}`);
-                    }
-                }
                 let applied = 0;
                 for (const [target, sourceVar] of Object.entries(themeMap)) {
                     const val = readVar(parentDoc, sourceVar);
@@ -167,10 +150,8 @@
                         applied++;
                     }
                 }
-                debug(`applied ${applied}/${Object.keys(themeMap).length} vars`);
             } catch (e) {
                 console.error('Could not apply HA theme:', e);
-                debug('applyTheme error: ' + e.message);
             }
         }
 
@@ -200,6 +181,7 @@
             setViewSpec(null);
             lastTable = null;
             stopUsagePoll();
+            usageViewActive = false;
             document.getElementById('title').textContent = 'HA SQLite Manager';
 
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
@@ -268,9 +250,15 @@
 
         let usageBaseline = {};
         let usagePollId = null;
+        let usageViewActive = false;
 
         function stopUsagePoll() {
             if (usagePollId) { clearInterval(usagePollId); usagePollId = null; }
+        }
+
+        function startUsagePoll() {
+            if (usagePollId) return;
+            usagePollId = setInterval(pollUsage, 3000);
         }
 
         function usageValue(e, key) {
@@ -296,6 +284,12 @@
                 if (changed) {
                     usageData = data;
                     renderUsage();
+                    debug(`usage poll '${usageConfig.label}' changed | sample ` +
+                        JSON.stringify(usageData.slice(0, 3).map(e => ({
+                            id: e[usageConfig.idKey],
+                            max: e[usageConfig.childMaxKey],
+                            new: usageValue(e, '__new__')
+                        }))));
                 }
             } catch (err) {}
         }
@@ -313,8 +307,15 @@
             usageSortDir = 'asc';
             usageBaseline = {};
             usageData.forEach(e => { usageBaseline[e[config.idKey]] = e[config.childMaxKey] || 0; });
+            debug(`usage open '${title}': ${usageData.length} rows | sample ` +
+                JSON.stringify(usageData.slice(0, 3).map(e => ({
+                    id: e[config.idKey],
+                    max: e[config.childMaxKey],
+                    base: usageBaseline[e[config.idKey]]
+                }))));
             renderUsage();
-            usagePollId = setInterval(pollUsage, 3000);
+            usageViewActive = true;
+            if (liveOn) startUsagePoll();
         }
 
         function sortUsage(key) {
@@ -365,6 +366,7 @@
             setViewSpec(null);
             lastTable = null;
             stopUsagePoll();
+            usageViewActive = false;
             document.getElementById('title').textContent = 'All Tables';
             showLoading();
             const tables = await api('/api/tables');
@@ -455,8 +457,10 @@
             liveOn = !liveOn;
             document.getElementById('live-toggle').textContent = liveOn ? 'Live: On' : 'Live: Off';
             if (liveOn) {
+                if (usageViewActive) startUsagePoll();
                 connectWs();
             } else {
+                stopUsagePoll();
                 if (ws) { ws.close(); ws = null; }
             }
         }
@@ -504,6 +508,7 @@
             setViewSpec(null);
             lastTable = null;
             stopUsagePoll();
+            usageViewActive = false;
             document.getElementById('title').textContent = 'Settings';
             const opts = localeOptions.map(o =>
                 `<option value="${o.value}" ${o.value === tsLocale ? 'selected' : ''}>${o.label}</option>`
@@ -556,6 +561,7 @@
         async function showTable(name, page, sortKey, sortDir) {
             setBack(showTables);
             stopUsagePoll();
+            usageViewActive = false;
             setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = name;
             showLoading();
@@ -573,6 +579,7 @@
         async function showEntityStates(entity_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('States', statesConfig));
             stopUsagePoll();
+            usageViewActive = false;
             setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = entity_id;
             showLoading();
@@ -590,6 +597,7 @@
         async function showStatisticData(statistic_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('Statistics', statisticsConfig));
             stopUsagePoll();
+            usageViewActive = false;
             setViewSpec({ kind: 'statistic', table: 'statistics', id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = statistic_id;
             showLoading();
@@ -607,6 +615,7 @@
         async function showEventTypeData(event_type, page, sortKey, sortDir) {
             setBack(() => showUsageView('Events', eventsConfig));
             stopUsagePoll();
+            usageViewActive = false;
             setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = event_type;
             showLoading();
