@@ -234,6 +234,7 @@
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
             html += `<button class="nav-button" onclick="showUsageView('States', statesConfig)">States</button>`;
             html += `<button class="nav-button" onclick="showUsageView('Statistics', statisticsConfig)">Statistics</button>`;
+            html += `<button class="nav-button" onclick="showUsageView('Statistics Short Term', statisticsShortTermConfig)">Statistics Short Term</button>`;
             html += `<button class="nav-button" onclick="showUsageView('Events', eventsConfig)">Events</button>`;
             html += '</div></div>';
 
@@ -277,6 +278,21 @@
             childMaxKey: 'max_stat_id',
             columns: [
                 { key: 'statistic_id', label: 'statistic_id', click: v => `showStatisticData('${v}', 1)` },
+                { key: 'metadata_id', label: 'metadata_id' },
+                { key: 'stat_count', label: 'stat_count' },
+                { key: '__new__', label: 'new' }
+            ]
+        };
+
+        const statisticsShortTermConfig = {
+            listEndpoint: '/api/statistics-short-term',
+            watchTable: 'statistics_short_term',
+            label: 'short-term statistics',
+            sortKey: 'statistic_id',
+            idKey: 'statistic_id',
+            childMaxKey: 'max_stat_id',
+            columns: [
+                { key: 'statistic_id', label: 'statistic_id', click: v => `showStatisticData('${v}', 1, '', '', true)` },
                 { key: 'metadata_id', label: 'metadata_id' },
                 { key: 'stat_count', label: 'stat_count' },
                 { key: '__new__', label: 'new' }
@@ -688,20 +704,22 @@
             );
         }
 
-        async function showStatisticData(statistic_id, page, sortKey, sortDir) {
-            setBack(() => showUsageView('Statistics', statisticsConfig));
+        async function showStatisticData(statistic_id, page, sortKey, sortDir, shortTerm) {
+            const table = shortTerm ? 'statistics_short_term' : 'statistics';
+            const config = shortTerm ? statisticsShortTermConfig : statisticsConfig;
+            setBack(() => showUsageView(shortTerm ? 'Statistics Short Term' : 'Statistics', config));
             usageViewActive = false;
             stopSettingsRefresh();
-            setViewSpec({ kind: 'statistic', table: 'statistics', id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
+            setViewSpec({ kind: 'statistic', table, id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = statistic_id;
             showLoading();
-            const fetchFn = () => api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${tableQuery(page, sortKey, sortDir)}`);
+            const fetchFn = () => api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${tableQuery(page, sortKey, sortDir)}${shortTerm ? '&short_term=1' : ''}`);
             const data = await fetchFn();
             renderTablePage(
                 data,
-                p => `showStatisticData('${statistic_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
+                p => `showStatisticData('${statistic_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}', ${shortTerm ? 'true' : 'false'})`,
                 sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
-                (k, d) => `showStatisticData('${statistic_id}', 1, '${k}', '${d}')`,
+                (k, d) => `showStatisticData('${statistic_id}', 1, '${k}', '${d}', ${shortTerm ? 'true' : 'false'})`,
                 fetchFn
             );
         }

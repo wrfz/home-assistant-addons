@@ -24,3 +24,11 @@ def test_frontend_script_syntax(tmp_path):
 def test_frontend_has_version_placeholder():
     html = HTML.read_text()
     assert "__APP_VERSION__" in html
+
+
+def test_frontend_has_short_term_usage():
+    html = HTML.read_text()
+    assert "Statistics Short Term" in html
+    assert "statisticsShortTermConfig" in html
+    assert "/api/statistics-short-term" in html
+    assert "statistics_short_term" in html

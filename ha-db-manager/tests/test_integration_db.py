@@ -93,6 +93,11 @@ def _seed(b, conn):
         "INSERT INTO statistics (metadata_id, start_ts, state) VALUES (?,?,?)",
         [2, 1000.0, "0.5"],
     )
+    b.execute(
+        conn,
+        "INSERT INTO statistics_short_term (metadata_id, start_ts, state) VALUES (?,?,?)",
+        [1, 1000.0, "1.1"],
+    )
     b.execute(conn, "INSERT INTO event_types (event_type) VALUES (?)", ["state_changed"])
     b.execute(conn, "INSERT INTO event_types (event_type) VALUES (?)", ["homeassistant_start"])
     b.execute(
@@ -177,6 +182,16 @@ async def _assert_endpoints(client):
     r = await client.get("/api/statistics")
     data = await r.json()
     assert {d["statistic_id"]: d["stat_count"] for d in data}["sensor.a_mean"] == 2
+
+    r = await client.get("/api/statistics-short-term")
+    data = await r.json()
+    by_id = {d["statistic_id"]: d for d in data}
+    assert by_id["sensor.a_mean"]["stat_count"] == 1
+    assert by_id["sensor.b_mean"]["stat_count"] == 0
+
+    r = await client.get("/api/statistic/sensor.a_mean/data", params={"short_term": "1"})
+    data = await r.json()
+    assert data["total_rows"] == 1
 
     r = await client.get("/api/event-types")
     data = await r.json()

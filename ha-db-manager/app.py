@@ -266,16 +266,54 @@ async def api_statistics(request):
     )
 
 
+async def api_statistics_short_term(request):
+    log.info("Listing short-term statistics entities with counts")
+    since = parse_int(request.query.get("since"), -1)
+    conn = get_db()
+    rows = db.execute(
+        conn,
+        """
+        SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count,
+               MAX(s.id) AS max_stat_id
+        FROM statistics_meta sm
+        LEFT JOIN statistics_short_term s ON s.metadata_id = sm.id
+        GROUP BY sm.id, sm.statistic_id
+        ORDER BY sm.statistic_id
+        """,
+    ).fetchall()
+    data = [dict(r) for r in rows]
+    if since >= 0:
+        new_counts = {
+            r["metadata_id"]: r["new_count"]
+            for r in db.execute(
+                conn,
+                "SELECT metadata_id, COUNT(*) AS new_count "
+                "FROM statistics_short_term WHERE id > ? GROUP BY metadata_id",
+                (since,),
+            ).fetchall()
+        }
+        for r in data:
+            r["new_count"] = new_counts.get(r["metadata_id"], 0)
+    conn.close()
+    log.info("Found %d short-term statistics", len(data))
+    return web.Response(
+        text=json.dumps(data, cls=SafeEncoder),
+        content_type="application/json",
+    )
+
+
 async def api_statistic_data(request):
     statistic_id = request.match_info["statistic_id"]
     page = parse_int(request.query.get("page"), 1)
     page_size = parse_int(request.query.get("page_size"), 100)
     sort = request.query.get("sort", "start_ts")
     sort_dir = request.query.get("dir", "desc")
+    short_term = request.query.get("short_term") == "1"
+    table = "statistics_short_term" if short_term else "statistics"
 
     log.info(
-        "Viewing data for statistic '%s' (page %d, page_size %d, sort=%s %s)",
-        statistic_id, page, page_size, sort, sort_dir,
+        "Viewing data for statistic '%s' (page %d, page_size %d, sort=%s %s, short_term=%s)",
+        statistic_id, page, page_size, sort, sort_dir, short_term,
     )
 
     conn = get_db()
@@ -289,19 +327,19 @@ async def api_statistic_data(request):
 
     metadata_id = meta["id"]
 
-    stat_cols = db.table_columns(conn, "statistics")
+    stat_cols = db.table_columns(conn, table)
     if sort not in stat_cols:
         sort = "start_ts"
     if sort_dir not in ("asc", "desc"):
         sort_dir = "desc"
 
     total_rows = db.execute(
-        conn, "SELECT COUNT(*) AS c FROM statistics WHERE metadata_id = ?", (metadata_id,)
+        conn, f'SELECT COUNT(*) AS c FROM {db.quote(table)} WHERE metadata_id = ?', (metadata_id,)
     ).fetchone()["c"]
     offset = (page - 1) * page_size
     res = db.execute(
         conn,
-        f'SELECT * FROM statistics WHERE metadata_id = ? '
+        f'SELECT * FROM {db.quote(table)} WHERE metadata_id = ? '
         f'ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?',
         (metadata_id, page_size, offset),
     )
@@ -430,7 +468,7 @@ STATS_TABLES = {"statistics", "statistics_short_term"}
 def max_id(conn, spec):
     kind = spec.get("kind")
     if kind == "usage":
-        pk = {"states": "state_id", "statistics": "id", "events": "event_id"}.get(spec.get("table"))
+        pk = {"states": "state_id", "statistics": "id", "statistics_short_term": "id", "events": "event_id"}.get(spec.get("table"))
         if pk:
             row = db.execute(
                 conn,
@@ -445,10 +483,11 @@ def max_id(conn, spec):
             (spec.get("id"),),
         ).fetchone()
     elif kind == "statistic":
+        stat_table = spec.get("table") or "statistics"
         row = db.execute(
             conn,
-            "SELECT MAX(id) AS m FROM statistics WHERE metadata_id = "
-            "(SELECT id FROM statistics_meta WHERE statistic_id = ?)",
+            f'SELECT MAX(id) AS m FROM {db.quote(stat_table)} WHERE metadata_id = '
+            f'(SELECT id FROM statistics_meta WHERE statistic_id = ?)',
             (spec.get("id"),),
         ).fetchone()
     elif kind == "event":
@@ -671,6 +710,7 @@ def create_app():
     app.router.add_get("/api/table/{table_name}", api_table)
     app.router.add_get("/api/entity/{entity_id}/states", api_entity_states)
     app.router.add_get("/api/statistics", api_statistics)
+    app.router.add_get("/api/statistics-short-term", api_statistics_short_term)
     app.router.add_get("/api/statistic/{statistic_id}/data", api_statistic_data)
     app.router.add_get("/api/event-types", api_event_types)
     app.router.add_get("/api/event-type/{event_type}/data", api_event_type_data)

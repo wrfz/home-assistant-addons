@@ -17,8 +17,15 @@ def test_max_id_usage(conn):
     assert app_module.max_id(conn, spec) == 4
     spec_stats = {"kind": "usage", "table": "statistics"}
     assert app_module.max_id(conn, spec_stats) == 3
+    spec_short = {"kind": "usage", "table": "statistics_short_term"}
+    assert app_module.max_id(conn, spec_short) == 1
     spec_events = {"kind": "usage", "table": "events"}
     assert app_module.max_id(conn, spec_events) == 3
+
+
+def test_max_id_statistic_short_term(conn):
+    assert app_module.max_id(conn, {"kind": "statistic", "table": "statistics", "id": "sensor.a_mean"}) == 2
+    assert app_module.max_id(conn, {"kind": "statistic", "table": "statistics_short_term", "id": "sensor.a_mean"}) == 1
 
 
 def test_max_id_entity(conn):

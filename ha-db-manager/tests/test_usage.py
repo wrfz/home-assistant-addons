@@ -66,6 +66,35 @@ async def test_statistics_since_new_count(client, seed_db):
     assert {d["statistic_id"]: d["new_count"] for d in data}["sensor.a_mean"] == 2
 
 
+async def test_statistics_short_term_usage(client):
+    r = await client.get("/api/statistics-short-term")
+    assert r.status == 200
+    data = await r.json()
+    by_id = {d["statistic_id"]: d for d in data}
+    assert by_id["sensor.a_mean"]["stat_count"] == 1
+    assert by_id["sensor.a_mean"]["max_stat_id"] == 1
+    assert by_id["sensor.b_mean"]["stat_count"] == 0
+
+
+async def test_statistics_short_term_since_new_count(client, seed_db):
+    r = await client.get("/api/statistics-short-term", params={"since": "0"})
+    data = await r.json()
+    by_id = {d["statistic_id"]: d for d in data}
+    assert by_id["sensor.a_mean"]["new_count"] == 1
+
+    conn = sqlite3.connect(seed_db)
+    conn.execute(
+        "INSERT INTO statistics_short_term (metadata_id, start_ts, state) VALUES (?,?,?)",
+        (1, 1200.0, "1.2"),
+    )
+    conn.commit()
+    conn.close()
+
+    r = await client.get("/api/statistics-short-term", params={"since": "0"})
+    data = await r.json()
+    assert {d["statistic_id"]: d["new_count"] for d in data}["sensor.a_mean"] == 2
+
+
 async def test_event_types_usage(client):
     r = await client.get("/api/event-types")
     assert r.status == 200
