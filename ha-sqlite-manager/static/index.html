@@ -86,6 +86,7 @@
         const debugEl = document.getElementById('theme-debug');
         let debugEnabled = true;
         debugEl.style.display = 'block';
+        debugEl.textContent = 'DBG-v3 loaded\n';
         function debug(msg) {
             console.log('[theme]', msg);
             if (debugEnabled && debugEl) {

@@ -173,8 +173,15 @@ async def api_entity_states(request):
     )
 
 
+@web.middleware
+async def no_cache_middleware(request, handler):
+    resp = await handler(request)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def create_app():
-    app = web.Application()
+    app = web.Application(middlewares=[no_cache_middleware])
     app.router.add_get("/", index)
     app.router.add_get("/api/tables", api_tables)
     app.router.add_get("/api/states", api_states)
