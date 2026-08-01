@@ -179,9 +179,9 @@
             document.getElementById('title').textContent = 'HA SQLite Manager';
 
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
-            html += `<button class="nav-button" onclick="showStates()">States</button>`;
-            html += `<button class="nav-button" onclick="alert('Statistics - coming soon')">Statistics</button>`;
-            html += `<button class="nav-button" onclick="alert('Events - coming soon')">Events</button>`;
+            html += `<button class="nav-button" onclick="showUsageView('States', statesConfig)">States</button>`;
+            html += `<button class="nav-button" onclick="showUsageView('Statistics', statisticsConfig)">Statistics</button>`;
+            html += `<button class="nav-button" onclick="showUsageView('Events', eventsConfig)">Events</button>`;
             html += '</div></div>';
 
             html += '<div class="menu-section"><h2>Tables</h2><div class="button-grid">';
@@ -191,53 +191,96 @@
             document.getElementById('content').innerHTML = html;
         }
 
-        let statesData = [];
-        let statesSortKey = 'entity_id';
-        let statesSortDir = 'asc';
+        let usageData = [];
+        let usageConfig = null;
+        let usageSortKey = null;
+        let usageSortDir = 'asc';
 
-        async function showStates() {
-            setBack(showHome);
-            document.getElementById('title').textContent = 'States';
-            showLoading();
-            statesData = await api('/api/states');
-            renderStates();
-        }
-
-        function sortStates(key) {
-            if (statesSortKey === key) {
-                statesSortDir = statesSortDir === 'asc' ? 'desc' : 'asc';
-            } else {
-                statesSortKey = key;
-                statesSortDir = 'asc';
-            }
-            renderStates();
-        }
-
-        function renderStates() {
-            const columns = [
-                { key: 'entity_id', label: 'entity_id' },
+        const statesConfig = {
+            listEndpoint: '/api/states',
+            label: 'entities',
+            sortKey: 'entity_id',
+            columns: [
+                { key: 'entity_id', label: 'entity_id', click: v => `showEntityStates('${v}', 1)` },
                 { key: 'metadata_id', label: 'metadata_id' },
                 { key: 'state_count', label: 'state_count' }
-            ];
+            ]
+        };
 
-            const sorted = [...statesData].sort((a, b) => {
-                const va = a[statesSortKey];
-                const vb = b[statesSortKey];
-                const dir = statesSortDir === 'asc' ? 1 : -1;
+        const statisticsConfig = {
+            listEndpoint: '/api/statistics',
+            label: 'statistics',
+            sortKey: 'statistic_id',
+            columns: [
+                { key: 'statistic_id', label: 'statistic_id', click: v => `showStatisticData('${v}', 1)` },
+                { key: 'metadata_id', label: 'metadata_id' },
+                { key: 'stat_count', label: 'stat_count' }
+            ]
+        };
+
+        const eventsConfig = {
+            listEndpoint: '/api/event-types',
+            label: 'event types',
+            sortKey: 'event_type',
+            columns: [
+                { key: 'event_type', label: 'event_type', click: v => `showEventTypeData('${v}', 1)` },
+                { key: 'event_type_id', label: 'event_type_id' },
+                { key: 'event_count', label: 'event_count' }
+            ]
+        };
+
+        async function showUsageView(title, config) {
+            setBack(showHome);
+            document.getElementById('title').textContent = title;
+            showLoading();
+            usageData = await api(config.listEndpoint);
+            usageConfig = config;
+            usageSortKey = config.sortKey;
+            usageSortDir = 'asc';
+            renderUsage();
+        }
+
+        function sortUsage(key) {
+            if (usageSortKey === key) {
+                usageSortDir = usageSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                usageSortKey = key;
+                usageSortDir = 'asc';
+            }
+            renderUsage();
+        }
+
+        function renderUsage() {
+            const columns = usageConfig.columns;
+            const sorted = [...usageData].sort((a, b) => {
+                const va = a[usageSortKey];
+                const vb = b[usageSortKey];
+                const dir = usageSortDir === 'asc' ? 1 : -1;
                 if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
                 return String(va ?? '').localeCompare(String(vb ?? '')) * dir;
             });
 
-            const arrow = statesSortDir === 'asc' ? ' &#9650;' : ' &#9660;';
+            const arrow = usageSortDir === 'asc' ? ' &#9650;' : ' &#9660;';
             const thead = columns.map(c =>
-                `<th style="cursor:pointer" onclick="sortStates('${c.key}')">${c.label}${statesSortKey === c.key ? arrow : ''}</th>`
+                `<th style="cursor:pointer" onclick="sortUsage('${c.key}')">${c.label}${usageSortKey === c.key ? arrow : ''}</th>`
             ).join('');
 
-            const html = '<div class="container"><table><thead><tr>' + thead + '</tr></thead><tbody>' +
-                sorted.map(e => `<tr><td><a onclick="showEntityStates('${e.entity_id}', 1)">${e.entity_id}</a></td><td>${e.metadata_id}</td><td>${e.state_count}</td></tr>`).join('') +
-                '</tbody></table></div>';
+            const rows = sorted.map(e => {
+                let cells = '';
+                for (const c of columns) {
+                    const val = e[c.key];
+                    if (c.click && val != null) {
+                        cells += `<td><a onclick="${c.click(val)}">${val}</a></td>`;
+                    } else {
+                        cells += `<td>${val != null ? val : ''}</td>`;
+                    }
+                }
+                return '<tr>' + cells + '</tr>';
+            }).join('');
 
-            document.getElementById('content').innerHTML = `<div class="info">${statesData.length} entities</div>` + html;
+            document.getElementById('content').innerHTML =
+                `<div class="info">${usageData.length} ${usageConfig.label}</div>` +
+                '<div class="container"><table><thead><tr>' + thead + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
         }
 
         async function showTables() {
@@ -289,11 +332,27 @@
         }
 
         async function showEntityStates(entity_id, page) {
-            setBack(showStates);
+            setBack(() => showUsageView('States', statesConfig));
             document.getElementById('title').textContent = entity_id;
             showLoading();
             const data = await api(`/api/entity/${encodeURIComponent(entity_id)}/states?page=${page}&page_size=100`);
             renderTablePage(data, p => `showEntityStates('${entity_id}', ${p})`);
+        }
+
+        async function showStatisticData(statistic_id, page) {
+            setBack(() => showUsageView('Statistics', statisticsConfig));
+            document.getElementById('title').textContent = statistic_id;
+            showLoading();
+            const data = await api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?page=${page}&page_size=100`);
+            renderTablePage(data, p => `showStatisticData('${statistic_id}', ${p})`);
+        }
+
+        async function showEventTypeData(event_type, page) {
+            setBack(() => showUsageView('Events', eventsConfig));
+            document.getElementById('title').textContent = event_type;
+            showLoading();
+            const data = await api(`/api/event-type/${encodeURIComponent(event_type)}/data?page=${page}&page_size=100`);
+            renderTablePage(data, p => `showEventTypeData('${event_type}', ${p})`);
         }
 
         showHome();
