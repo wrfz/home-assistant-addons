@@ -29,10 +29,10 @@ jobs:
           --health-cmd "mysqladmin ping -h 127.0.0.1 -psecret"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Install dependencies
         run: pip install -r ha-db-manager/requirements-dev.txt
       - name: Python compile check
