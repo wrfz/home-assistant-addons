@@ -57,6 +57,13 @@
         .pagination button:disabled { opacity: 0.4; cursor: default; }
         .pagination span { padding: 0.4rem 0.8rem; border-radius: 4px; background: var(--app-accent); color: var(--app-accent-text); }
         .container { overflow-x: auto; }
+        .settings { max-width: 40rem; padding: 0.5rem 0; }
+        .settings-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+        .settings-row label { font-weight: bold; }
+        .settings-row select {
+            padding: 0.4rem 0.6rem; border-radius: 4px;
+            background: var(--app-header-bg); border: 1px solid var(--app-border-strong); color: var(--app-text);
+        }
         #back { margin-bottom: 1rem; display: none; }
         #ts-toggle {
             position: fixed; top: 0.75rem; right: 0.75rem; z-index: 999;
@@ -193,6 +200,10 @@
 
             html += '<div class="menu-section"><h2>Tables</h2><div class="button-grid">';
             html += `<button class="nav-button" onclick="showTables()">All Tables</button>`;
+            html += '</div></div>';
+
+            html += '<div class="menu-section"><h2>Settings</h2><div class="button-grid">';
+            html += `<button class="nav-button" onclick="showSettings()">Settings</button>`;
             html += '</div></div>';
 
             document.getElementById('content').innerHTML = html;
@@ -334,6 +345,41 @@
 
         let tsMode = 'human';
         let lastTable = null;
+        let tsLocale = localStorage.getItem('tsLocale') || 'local';
+
+        const localeOptions = [
+            { value: 'local', label: 'Local (Browser default)' },
+            { value: 'de-DE', label: 'Deutsch (de-DE)' },
+            { value: 'en-US', label: 'English (US)' },
+            { value: 'en-GB', label: 'English (UK)' },
+            { value: 'fr-FR', label: 'Français (fr-FR)' },
+            { value: 'es-ES', label: 'Español (es-ES)' },
+            { value: 'it-IT', label: 'Italiano (it-IT)' },
+            { value: 'nl-NL', label: 'Nederlands (nl-NL)' },
+            { value: 'pt-BR', label: 'Português (BR)' },
+            { value: 'pl-PL', label: 'Polski (pl-PL)' }
+        ];
+
+        function showSettings() {
+            setBack(showHome);
+            document.getElementById('title').textContent = 'Settings';
+            const opts = localeOptions.map(o =>
+                `<option value="${o.value}" ${o.value === tsLocale ? 'selected' : ''}>${o.label}</option>`
+            ).join('');
+            document.getElementById('content').innerHTML =
+                '<div class="container"><div class="settings">' +
+                '<div class="settings-row">' +
+                '<label for="ts-locale">Timestamp format:</label>' +
+                `<select id="ts-locale">${opts}</select>` +
+                '</div>' +
+                `<div class="info">Local uses your browser's language. The other options force a specific language, e.g. Deutsch = "01.08.2026, 12:30:00", US = "8/1/2026, 12:30:00 PM".</div>` +
+                '</div></div>';
+            document.getElementById('ts-locale').addEventListener('change', e => {
+                tsLocale = e.target.value;
+                localStorage.setItem('tsLocale', tsLocale);
+                if (lastTable) renderTablePage(lastTable.data, lastTable.pageCall);
+            });
+        }
 
         function toggleTsMode() {
             tsMode = tsMode === 'human' ? 'raw' : 'human';
@@ -347,7 +393,8 @@
             const n = Number(val);
             if (!isFinite(n) || n === 0) return val;
             try {
-                return new Date(n * 1000).toLocaleString();
+                const locale = tsLocale === 'local' ? undefined : tsLocale;
+                return new Date(n * 1000).toLocaleString(locale);
             } catch (e) {
                 return val;
             }
