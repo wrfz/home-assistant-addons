@@ -99,8 +99,13 @@ async def api_table(request):
     table_name = request.match_info["table_name"]
     page = parse_int(request.query.get("page"), 1)
     page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort")
+    sort_dir = request.query.get("dir", "asc")
 
-    log.info("Viewing table '%s' (page %d, page_size %d)", table_name, page, page_size)
+    log.info(
+        "Viewing table '%s' (page %d, page_size %d, sort=%s %s)",
+        table_name, page, page_size, sort, sort_dir,
+    )
 
     conn = get_db()
 
@@ -112,11 +117,16 @@ async def api_table(request):
         log.warning("Table '%s' not found", table_name)
         return web.json_response({"error": "Table not found"}, status=404)
 
+    table_cols = {r["name"] for r in conn.execute(f'PRAGMA table_info("{table_name}")')}
+    order_clause = ""
+    if sort in table_cols and sort_dir in ("asc", "desc"):
+        order_clause = f' ORDER BY "{sort}" {sort_dir.upper()}'
+
     total_rows = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
     offset = (page - 1) * page_size
 
     cursor = conn.execute(
-        f'SELECT * FROM "{table_name}" LIMIT ? OFFSET ?', (page_size, offset)
+        f'SELECT * FROM "{table_name}"{order_clause} LIMIT ? OFFSET ?', (page_size, offset)
     )
     columns = [desc[0] for desc in cursor.description]
     rows = [dict(r) for r in cursor.fetchall()]
@@ -144,8 +154,13 @@ async def api_entity_states(request):
     entity_id = request.match_info["entity_id"]
     page = parse_int(request.query.get("page"), 1)
     page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort", "last_updated_ts")
+    sort_dir = request.query.get("dir", "desc")
 
-    log.info("GET /api/entity/%s/states (page=%d, page_size=%d)", entity_id, page, page_size)
+    log.info(
+        "GET /api/entity/%s/states (page=%d, page_size=%d, sort=%s %s)",
+        entity_id, page, page_size, sort, sort_dir,
+    )
 
     conn = get_db()
 
@@ -160,6 +175,12 @@ async def api_entity_states(request):
     metadata_id = meta["metadata_id"]
     log.info("Entity '%s' -> metadata_id=%d", entity_id, metadata_id)
 
+    states_cols = {r["name"] for r in conn.execute("PRAGMA table_info(states)")}
+    if sort not in states_cols:
+        sort = "last_updated_ts"
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+
     total_rows = conn.execute(
         "SELECT COUNT(*) FROM states WHERE metadata_id = ?", (metadata_id,)
     ).fetchone()[0]
@@ -167,8 +188,8 @@ async def api_entity_states(request):
 
     offset = (page - 1) * page_size
     cursor = conn.execute(
-        "SELECT * FROM states WHERE metadata_id = ? "
-        "ORDER BY last_updated_ts DESC LIMIT ? OFFSET ?",
+        f'SELECT * FROM states WHERE metadata_id = ? '
+        f'ORDER BY "{sort}" {sort_dir.upper()} LIMIT ? OFFSET ?',
         (metadata_id, page_size, offset),
     )
     columns = [desc[0] for desc in cursor.description]
@@ -218,8 +239,13 @@ async def api_statistic_data(request):
     statistic_id = request.match_info["statistic_id"]
     page = parse_int(request.query.get("page"), 1)
     page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort", "start_ts")
+    sort_dir = request.query.get("dir", "desc")
 
-    log.info("Viewing data for statistic '%s' (page %d, page_size %d)", statistic_id, page, page_size)
+    log.info(
+        "Viewing data for statistic '%s' (page %d, page_size %d, sort=%s %s)",
+        statistic_id, page, page_size, sort, sort_dir,
+    )
 
     conn = get_db()
     meta = conn.execute(
@@ -231,13 +257,20 @@ async def api_statistic_data(request):
         return web.json_response({"error": "Statistic not found"}, status=404)
 
     metadata_id = meta["id"]
+
+    stat_cols = {r["name"] for r in conn.execute("PRAGMA table_info(statistics)")}
+    if sort not in stat_cols:
+        sort = "start_ts"
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+
     total_rows = conn.execute(
         "SELECT COUNT(*) FROM statistics WHERE metadata_id = ?", (metadata_id,)
     ).fetchone()[0]
     offset = (page - 1) * page_size
     cursor = conn.execute(
-        "SELECT * FROM statistics WHERE metadata_id = ? "
-        "ORDER BY start_ts DESC LIMIT ? OFFSET ?",
+        f'SELECT * FROM statistics WHERE metadata_id = ? '
+        f'ORDER BY "{sort}" {sort_dir.upper()} LIMIT ? OFFSET ?',
         (metadata_id, page_size, offset),
     )
     columns = [desc[0] for desc in cursor.description]
@@ -287,8 +320,13 @@ async def api_event_type_data(request):
     event_type = request.match_info["event_type"]
     page = parse_int(request.query.get("page"), 1)
     page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort", "time_fired_ts")
+    sort_dir = request.query.get("dir", "desc")
 
-    log.info("Viewing events for type '%s' (page %d, page_size %d)", event_type, page, page_size)
+    log.info(
+        "Viewing events for type '%s' (page %d, page_size %d, sort=%s %s)",
+        event_type, page, page_size, sort, sort_dir,
+    )
 
     conn = get_db()
     meta = conn.execute(
@@ -300,13 +338,20 @@ async def api_event_type_data(request):
         return web.json_response({"error": "Event type not found"}, status=404)
 
     event_type_id = meta["event_type_id"]
+
+    events_cols = {r["name"] for r in conn.execute("PRAGMA table_info(events)")}
+    if sort not in events_cols:
+        sort = "time_fired_ts"
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+
     total_rows = conn.execute(
         "SELECT COUNT(*) FROM events WHERE event_type_id = ?", (event_type_id,)
     ).fetchone()[0]
     offset = (page - 1) * page_size
     cursor = conn.execute(
-        "SELECT * FROM events WHERE event_type_id = ? "
-        "ORDER BY time_fired_ts DESC LIMIT ? OFFSET ?",
+        f'SELECT * FROM events WHERE event_type_id = ? '
+        f'ORDER BY "{sort}" {sort_dir.upper()} LIMIT ? OFFSET ?',
         (event_type_id, page_size, offset),
     )
     columns = [desc[0] for desc in cursor.description]

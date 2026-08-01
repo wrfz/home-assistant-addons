@@ -320,13 +320,20 @@
                 '</div>';
         }
 
-        function renderTablePage(data, pageCall) {
+        function renderTablePage(data, pageCall, sort, sortAction) {
             lastTable = { data, pageCall };
             let html = `<div class="info">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>`;
             html += paginationHtml(data, pageCall);
 
             html += '<div class="container"><table><thead><tr>';
-            data.columns.forEach(c => html += `<th>${c}</th>`);
+            data.columns.forEach(c => {
+                const isSorted = sort && sort.key === c;
+                const arrow = isSorted ? (sort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
+                const onclick = sortAction
+                    ? `onclick="${sortAction(c, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
+                    : '';
+                html += `<th style="cursor:pointer" ${onclick}>${c}${arrow}</th>`;
+            });
             html += '</tr></thead><tbody>';
             data.rows.forEach(row => {
                 html += '<tr>';
@@ -403,36 +410,68 @@
             }
         }
 
-        async function showTable(name, page) {
+        async function showTable(name, page, sortKey, sortDir) {
             setBack(showTables);
             document.getElementById('title').textContent = name;
             showLoading();
-            const data = await api(`/api/table/${encodeURIComponent(name)}?page=${page}&page_size=100`);
-            renderTablePage(data, p => `showTable('${name}', ${p})`);
+            const qs = new URLSearchParams({ page, page_size: 100 });
+            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
+            const data = await api(`/api/table/${encodeURIComponent(name)}?${qs}`);
+            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            renderTablePage(
+                data,
+                p => `showTable('${name}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
+                sort,
+                (k, d) => `showTable('${name}', 1, '${k}', '${d}')`
+            );
         }
 
-        async function showEntityStates(entity_id, page) {
+        async function showEntityStates(entity_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('States', statesConfig));
             document.getElementById('title').textContent = entity_id;
             showLoading();
-            const data = await api(`/api/entity/${encodeURIComponent(entity_id)}/states?page=${page}&page_size=100`);
-            renderTablePage(data, p => `showEntityStates('${entity_id}', ${p})`);
+            const qs = new URLSearchParams({ page, page_size: 100 });
+            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
+            const data = await api(`/api/entity/${encodeURIComponent(entity_id)}/states?${qs}`);
+            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            renderTablePage(
+                data,
+                p => `showEntityStates('${entity_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
+                sort,
+                (k, d) => `showEntityStates('${entity_id}', 1, '${k}', '${d}')`
+            );
         }
 
-        async function showStatisticData(statistic_id, page) {
+        async function showStatisticData(statistic_id, page, sortKey, sortDir) {
             setBack(() => showUsageView('Statistics', statisticsConfig));
             document.getElementById('title').textContent = statistic_id;
             showLoading();
-            const data = await api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?page=${page}&page_size=100`);
-            renderTablePage(data, p => `showStatisticData('${statistic_id}', ${p})`);
+            const qs = new URLSearchParams({ page, page_size: 100 });
+            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
+            const data = await api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${qs}`);
+            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            renderTablePage(
+                data,
+                p => `showStatisticData('${statistic_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
+                sort,
+                (k, d) => `showStatisticData('${statistic_id}', 1, '${k}', '${d}')`
+            );
         }
 
-        async function showEventTypeData(event_type, page) {
+        async function showEventTypeData(event_type, page, sortKey, sortDir) {
             setBack(() => showUsageView('Events', eventsConfig));
             document.getElementById('title').textContent = event_type;
             showLoading();
-            const data = await api(`/api/event-type/${encodeURIComponent(event_type)}/data?page=${page}&page_size=100`);
-            renderTablePage(data, p => `showEventTypeData('${event_type}', ${p})`);
+            const qs = new URLSearchParams({ page, page_size: 100 });
+            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
+            const data = await api(`/api/event-type/${encodeURIComponent(event_type)}/data?${qs}`);
+            const sort = sortKey && sortDir ? { key: sortKey, dir: sortDir } : null;
+            renderTablePage(
+                data,
+                p => `showEventTypeData('${event_type}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
+                sort,
+                (k, d) => `showEventTypeData('${event_type}', 1, '${k}', '${d}')`
+            );
         }
 
         showHome();
