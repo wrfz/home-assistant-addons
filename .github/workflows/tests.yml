@@ -34,19 +34,19 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r ha-sqlite-manager/requirements-dev.txt
+        run: pip install -r ha-db-manager/requirements-dev.txt
       - name: Python compile check
-        run: python -m py_compile ha-sqlite-manager/app.py ha-sqlite-manager/db.py
+        run: python -m py_compile ha-db-manager/app.py ha-db-manager/db.py
       - name: Run tests
         env:
           HA_TEST_MYSQL_URL: mysql://root:secret@localhost:3307/hass?charset=utf8mb4
           HA_TEST_PG_URL: postgresql://postgres:secret@localhost:5433/hass
-        run: python -m pytest ha-sqlite-manager -v
+        run: python -m pytest ha-db-manager -v
       - name: Frontend syntax check
         run: |
           python - <<'EOF'
           import pathlib, re, subprocess, tempfile
-          html = pathlib.Path("ha-sqlite-manager/static/index.html").read_text()
+          html = pathlib.Path("ha-db-manager/static/index.html").read_text()
           m = re.search(r"<script>(.*)</script>", html, re.S)
           assert m, "no inline script found"
           f = tempfile.NamedTemporaryFile(suffix=".js", delete=False)

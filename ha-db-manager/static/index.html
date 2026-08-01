@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>HA SQLite Manager</title>
+    <title>Home Assistant DB Manager</title>
     <style>
         :root {
             --app-bg: #1c1c1c;
@@ -105,7 +105,7 @@
         <button class="top-btn" id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
     </div>
     <div id="back"><a onclick="goBack()">&larr; Back</a></div>
-    <h1 id="title">HA SQLite Manager</h1>
+    <h1 id="title">Home Assistant DB Manager</h1>
     <div id="content"></div>
     <div id="debug-panel">
         <div id="debug-title">Debug</div>
@@ -229,7 +229,7 @@
             lastTable = null;
             usageViewActive = false;
             stopSettingsRefresh();
-            document.getElementById('title').textContent = 'HA SQLite Manager';
+            document.getElementById('title').textContent = 'Home Assistant DB Manager';
 
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
             html += `<button class="nav-button" onclick="showUsageView('States', statesConfig)">States</button>`;

@@ -1,7 +1,7 @@
-name: "HA SQLite Manager"
-description: "View and manage Home Assistant SQLite database tables (states, statistics)"
-version: "0.38.0"
-slug: "ha-sqlite-manager"
+name: "Home Assistant DB Manager"
+description: "View and manage Home Assistant database tables (states, statistics, events) for SQLite, MySQL and PostgreSQL"
+version: "0.39.0"
+slug: "ha-db-manager"
 url: "https://github.com/wrfz/home-assistant-addons"
 arch:
   - aarch64
@@ -10,7 +10,7 @@ init: false
 ingress: true
 ingress_port: 8099
 panel_icon: "mdi:database-search"
-panel_title: "SQLite Manager"
+panel_title: "DB Manager"
 map:
   - config:ro
 startup: application

@@ -27,7 +27,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-log = logging.getLogger("ha-sqlite-manager")
+log = logging.getLogger("ha-db-manager")
 
 
 def read_app_version():
@@ -681,7 +681,7 @@ def create_app():
 
 if __name__ == "__main__":
     backend = db.get_backend()
-    log.info("Starting HA SQLite Manager on port 8099")
+    log.info("Starting Home Assistant DB Manager on port 8099")
     log.info("Database backend: %s (%s)", backend.kind, backend.display_name())
     app = create_app()
     web.run_app(app, port=8099)
