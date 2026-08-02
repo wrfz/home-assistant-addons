@@ -211,46 +211,43 @@ def usage_paged(conn, spec, page, page_size, sort, sort_dir, since):
 
     Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
     the global max of the count-table primary key (used by the frontend as the
-    `since` anchor for the `new` column). When `since >= 0` every returned row
-    carries a `new_count` value and the `new_count` column is appended.
+    `since` anchor for the `new` column). When `since >= 0` every row carries a
+    global `new_count` value (also sortable) and the `new_count` column is
+    appended.
     """
-    if sort not in spec["sorts"]:
+    sorts = list(spec["sorts"])
+    if since >= 0:
+        sorts.append("new_count")
+    if sort not in sorts:
         sort = spec["default_sort"]
     if sort_dir not in ("asc", "desc"):
         sort_dir = "desc"
     base = spec["query"]
+    base_params = []
+    if since >= 0:
+        base = (
+            f"SELECT t.*, COALESCE(nc.new_count, 0) AS new_count "
+            f"FROM ({base}) t "
+            f"LEFT JOIN (SELECT {spec['group_col']} AS g, COUNT(*) AS new_count "
+            f"FROM {db.quote(spec['count_table'])} "
+            f"WHERE {db.quote(spec['count_pk'])} > ? "
+            f"GROUP BY {spec['group_col']}) nc "
+            f"ON nc.g = t.{spec['group_col']}"
+        )
+        base_params = [since]
     total_rows = db.execute(
-        conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t"
+        conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t", base_params
     ).fetchone()["c"]
     offset = (page - 1) * page_size
     res = db.execute(
         conn,
         f"SELECT * FROM ({base}) AS t "
         f"ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?",
-        [page_size, offset],
+        base_params + [page_size, offset],
     )
     columns = list(res.columns)
     rows = res.fetchall()
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    if since >= 0 and rows:
-        group_col = spec["group_col"]
-        ids = [r[group_col] for r in rows]
-        placeholders = ",".join("?" * len(ids))
-        new_counts = {
-            r[group_col]: r["new_count"]
-            for r in db.execute(
-                conn,
-                f"SELECT {group_col}, COUNT(*) AS new_count "
-                f"FROM {db.quote(spec['count_table'])} "
-                f"WHERE {db.quote(spec['count_pk'])} > ? "
-                f"AND {group_col} IN ({placeholders}) "
-                f"GROUP BY {group_col}",
-                [since] + ids,
-            ).fetchall()
-        }
-        columns.append("new_count")
-        for r in rows:
-            r["new_count"] = new_counts.get(r[group_col], 0)
     row = db.execute(
         conn,
         f"SELECT MAX({db.quote(spec['count_pk'])}) AS m "

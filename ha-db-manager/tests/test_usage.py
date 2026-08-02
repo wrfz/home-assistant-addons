@@ -40,6 +40,19 @@ async def test_states_usage_paged(client):
     assert [row["entity_id"] for row in data["rows"]] == ["sensor.b", "sensor.a"]
 
 
+async def test_states_usage_sorted_by_new_count(client):
+    r = await client.get("/api/states", params={"since": "0", "sort": "new_count", "dir": "desc"})
+    data = await r.json()
+    assert "new_count" in data["columns"]
+    assert data["rows"][0]["entity_id"] == "sensor.a"
+    assert data["rows"][0]["new_count"] == 2
+    assert all("new_count" in row for row in data["rows"])
+
+    r = await client.get("/api/states", params={"since": "0", "sort": "new_count", "dir": "asc"})
+    data = await r.json()
+    assert data["rows"][-1]["entity_id"] == "sensor.a"
+
+
 async def test_states_usage_with_since(client, seed_db):
     r = await client.get("/api/states", params={"since": "4"})
     data = await r.json()

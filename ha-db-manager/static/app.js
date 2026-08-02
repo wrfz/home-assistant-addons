@@ -202,7 +202,7 @@
             const cols = [];
             for (const c of config.columns) {
                 if (c.key === '__new__') {
-                    if (data.columns.includes('new_count')) cols.push({ key: 'new_count', label: c.label, sortable: false });
+                    if (data.columns.includes('new_count')) cols.push({ key: 'new_count', label: c.label });
                 } else if (data.columns.includes(c.key)) {
                     cols.push(c);
                 }
