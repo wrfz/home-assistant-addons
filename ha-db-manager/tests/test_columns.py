@@ -10,6 +10,22 @@ async def test_hidden_columns_default_empty(client):
     assert data["hidden_columns"] == {}
 
 
+def test_format_bytes():
+    assert app_module.format_bytes(0) == "0B"
+    assert app_module.format_bytes(12) == "12B"
+    assert app_module.format_bytes(1024) == "1.0kB"
+    assert app_module.format_bytes(30 * 1024) == "30.0kB"
+    assert app_module.format_bytes(45 * 1024 * 1024) == "45.0MB"
+    assert app_module.format_bytes(1.2 * 1024 ** 3) == "1.2GB"
+
+
+def test_safe_encoder_renders_bytes_as_size():
+    import json as _json
+
+    out = _json.dumps({"data": b"\x01\x02\x03"}, cls=app_module.SafeEncoder)
+    assert '"3B"' in out
+
+
 async def test_hide_column(client):
     r = await client.post("/api/columns/hide", json={"table": "states", "column": "entity_id"})
     assert r.status == 200

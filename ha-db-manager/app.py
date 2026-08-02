@@ -10,13 +10,22 @@ from aiohttp import web
 import db
 
 
+def format_bytes(size):
+    """Human-readable byte size: 12B, 30kB, 45MB, 1.2GB, ..."""
+    value = float(size)
+    for unit in ("B", "kB", "MB", "GB", "TB", "PB"):
+        if value < 1024 or unit == "PB":
+            if unit == "B":
+                return f"{int(value)}B"
+            return f"{value:.1f}{unit}"
+        value /= 1024
+    return f"{size}B"
+
+
 class SafeEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, bytes):
-            try:
-                return obj.decode("utf-8")
-            except UnicodeDecodeError:
-                return f"<binary {len(obj)} bytes>"
+            return format_bytes(len(obj))
         return super().default(obj)
 
 STATIC_DIR = Path(os.environ.get("HA_STATIC_DIR", "/opt/static"))
