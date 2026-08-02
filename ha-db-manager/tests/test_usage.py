@@ -15,7 +15,7 @@ async def test_states_usage(client):
     assert data["total_rows"] == 3
     assert data["total_pages"] == 1
     assert data["global_baseline"] == 4
-    assert data["columns"] == ["metadata_id", "entity_id", "state_count", "new_count"]
+    assert data["columns"] == ["entity_id", "metadata_id", "state_count", "new_count"]
     by_id = _rows(data)
     assert by_id["sensor.a"]["state_count"] == 2
     assert by_id["sensor.b"]["state_count"] == 1
@@ -85,6 +85,7 @@ async def test_statistics_usage(client):
     assert r.status == 200
     data = await r.json()
     assert data["total_rows"] == 2
+    assert data["columns"] == ["statistic_id", "metadata_id", "stat_count", "short_stat_count", "new_count"]
     by_id = {d["statistic_id"]: d for d in data["rows"]}
     assert by_id["sensor.a_mean"]["stat_count"] == 2
     assert by_id["sensor.a_mean"]["short_stat_count"] == 1
@@ -115,6 +116,7 @@ async def test_event_types_usage(client):
     assert r.status == 200
     data = await r.json()
     assert data["total_rows"] == 2
+    assert data["columns"] == ["event_type", "event_type_id", "event_count", "new_count"]
     by_type = {d["event_type"]: d for d in data["rows"]}
     assert by_type["state_changed"]["event_count"] == 2
 

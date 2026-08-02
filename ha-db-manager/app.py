@@ -144,7 +144,7 @@ RELATIONS = [
 USAGE_SPECS = {
     "states_meta": {
         "label": "States",
-        "base": "SELECT sm.metadata_id, sm.entity_id FROM states_meta sm",
+        "base": "SELECT sm.entity_id, sm.metadata_id FROM states_meta sm",
         "counts": [
             {"table": "states", "pk": "state_id", "group": "metadata_id",
              "count": "state_count"},
@@ -158,7 +158,7 @@ USAGE_SPECS = {
     },
     "statistics_meta": {
         "label": "Statistics",
-        "base": "SELECT sm.id AS metadata_id, sm.statistic_id FROM statistics_meta sm",
+        "base": "SELECT sm.statistic_id, sm.id AS metadata_id FROM statistics_meta sm",
         "counts": [
             {"table": "statistics", "pk": "id", "group": "metadata_id",
              "count": "stat_count"},
@@ -176,7 +176,7 @@ USAGE_SPECS = {
     },
     "event_types": {
         "label": "Events",
-        "base": "SELECT et.event_type_id, et.event_type FROM event_types et",
+        "base": "SELECT et.event_type, et.event_type_id FROM event_types et",
         "counts": [
             {"table": "events", "pk": "event_id", "group": "event_type_id",
              "count": "event_count"},
