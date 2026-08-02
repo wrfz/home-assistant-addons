@@ -55,11 +55,37 @@ th.virtual, td.virtual { background: var(--app-virtual-bg); }
 td .null-cell {
     color: var(--app-text-secondary); font-style: italic; opacity: 0.8;
 }
-th .col-hide {
-    float: right; margin-left: 0.5rem; color: var(--app-text-secondary);
-    cursor: pointer; font-weight: bold; user-select: none;
+th .col-actions {
+    float: right; margin-left: 0.5rem; display: inline-flex;
+    white-space: nowrap; vertical-align: middle; gap: 0.2rem;
 }
-.col-hide:hover { color: var(--app-accent); }
+th .col-hide {
+    color: var(--app-text-secondary);
+    cursor: pointer; font-weight: bold; user-select: none;
+    display: inline-block; width: 1.7rem; box-sizing: border-box;
+    padding: 0.15rem 0; line-height: 1.2; text-align: center;
+    border-radius: 4px; background: var(--app-card-bg-hover);
+}
+.col-hide:hover { color: var(--app-accent); background: var(--app-card-bg-hover); }
+th .col-info {
+    color: var(--app-text-secondary);
+    cursor: pointer; font-weight: bold; user-select: none;
+    display: inline-block; width: 1.7rem; box-sizing: border-box;
+    padding: 0.15rem 0; line-height: 1.2; text-align: center;
+    border-radius: 4px; background: var(--app-card-bg-hover);
+}
+.col-info:hover { color: var(--app-accent); background: var(--app-card-bg-hover); }
+.col-info-popup {
+    position: fixed; z-index: 10000; max-width: 24rem;
+    background: var(--app-card-bg); color: var(--app-text);
+    border: 1px solid var(--app-border-strong); border-radius: 6px;
+    padding: 0.6rem 0.8rem; font-size: 0.85rem; line-height: 1.45;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.col-info-popup-title {
+    font-weight: bold; margin-bottom: 0.3rem; color: var(--app-accent);
+    word-break: break-all;
+}
 .top-btn:disabled { opacity: 0.4; cursor: default; }
 .top-btn:disabled:hover { border-color: var(--app-border-strong); }
 .hidden-table { margin-top: 0.5rem; font-weight: bold; }

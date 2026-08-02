@@ -141,6 +141,43 @@
             }
         }
 
+        let columnInfoEl = null;
+
+        function removeColumnInfo() {
+            if (columnInfoEl) {
+                columnInfoEl.remove();
+                columnInfoEl = null;
+            }
+        }
+
+        function showColumnInfo(event, table, key) {
+            event.preventDefault();
+            event.stopPropagation();
+            removeColumnInfo();
+            const meta = tableMeta(table);
+            const desc = (meta.column_info || {})[key];
+            if (!desc) return;
+            const popup = document.createElement('div');
+            popup.className = 'col-info-popup';
+            popup.innerHTML = '<div class="col-info-popup-title">' + escapeHtml(key) + '</div>' +
+                '<div class="col-info-popup-body">' + escapeHtml(desc) + '</div>';
+            document.body.appendChild(popup);
+            columnInfoEl = popup;
+            const rect = event.currentTarget.getBoundingClientRect();
+            const pr = popup.getBoundingClientRect();
+            let left = rect.left;
+            if (left + pr.width > window.innerWidth - 8) {
+                left = Math.max(8, window.innerWidth - pr.width - 8);
+            }
+            let top = rect.bottom + 6;
+            if (top + pr.height > window.innerHeight - 8) {
+                top = Math.max(8, rect.top - pr.height - 6);
+            }
+            popup.style.left = left + 'px';
+            popup.style.top = top + 'px';
+            popup.addEventListener('mouseleave', removeColumnInfo);
+        }
+
         async function showHome() {
             const gen = beginView();
             setBack(null);
@@ -373,9 +410,11 @@
                 const onclick = sortAction && sortable
                     ? `onclick="${sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
                     : '';
+                const info = `<span class="col-info" title="Column info" onclick="event.stopPropagation(); showColumnInfo(event, '${tableName}', '${key}')">i</span>`;
                 const hide = protectedCols.includes(key) ? '' :
                     `<span class="col-hide" title="Hide this column" onclick="event.stopPropagation(); hideColumn('${tableName}', '${key}')">&times;</span>`;
-                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}${hide}</th>`;
+                const actions = `<span class="col-actions">${info}${hide}</span>`;
+                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}${actions}</th>`;
             });
             return thead + '</tr>';
         }
@@ -393,6 +432,7 @@
 
         function updateTableInPlace(data, pageCall) {
             if (!lastTable) return;
+            removeColumnInfo();
             lastTable.data = data;
             lastTable.pageCall = pageCall;
             const cols = lastTable.colsFn ? lastTable.colsFn(data) : null;
@@ -425,6 +465,7 @@
         let viewGen = 0;
 
         function beginView() {
+            removeColumnInfo();
             return ++viewGen;
         }
 

@@ -102,6 +102,7 @@ async def api_tables(request):
             "default_sort": USAGE_SPECS[name].get("default_sort") if name in USAGE_SPECS else None,
             "links": _view_links(name),
             "virtual_cols": _virtual_cols(name),
+            "column_info": _column_info(name),
         }
         for name in tables
     ]
@@ -231,6 +232,148 @@ USAGE_SPECS = {
         },
     },
 }
+
+
+COLUMN_DESCRIPTIONS = {
+    "states_meta": {
+        "metadata_id": "Eindeutige ID der Entity-Metadaten-Zeile. Diese ID verbindet die Zustandshistorie (Tabelle 'states') mit der zugehörigen Entität.",
+        "entity_id": "Entitäts-ID im Format 'domain.object_id', z.B. 'sensor.temperatur'. Verknüpfung (Link): Klick öffnet die Zustandshistorie der Entität.",
+        "state_count": "Anzahl der gespeicherten Zustände (Zeilen in 'states') für diese Entität. Wird von der App berechnet (virtuelle Spalte).",
+        "new_count": "Anzahl der Zustände, die seit dem letzten 'Clean New' neu hinzugekommen sind. Wird von der App berechnet (virtuelle Spalte).",
+    },
+    "states": {
+        "state_id": "Primärschlüssel. Fortlaufende, einmalige ID pro gespeichertem Zustand.",
+        "entity_id": "Entitäts-ID als Text (legacy). In neueren HA-Versionen durch 'metadata_id' ersetzt; in neuen Datenbanken meist leer.",
+        "state": "Der eigentliche Zustandswert als Text, z.B. 'on', 'off', '1.0' oder 'home'. Entspricht dem Zustand, den du in HA unter der Entität siehst.",
+        "attributes": "JSON-kodierte Attribute des Zustands (legacy). In neueren HA-Versionen durch 'attributes_id' ersetzt.",
+        "event_id": "Verknüpfung zum auslösenden Event ('events.event_id'). Nur in älteren Versionen gesetzt.",
+        "last_changed": "Zeitpunkt der letzten Wertänderung als Text (legacy).",
+        "last_changed_ts": "Unix-Timestamp (Sekunden) der letzten Wertänderung. Wird nur aktualisiert, wenn sich der Zustandswert tatsächlich ändert.",
+        "last_updated": "Zeitpunkt der letzten Aktualisierung als Text (legacy).",
+        "last_updated_ts": "Unix-Timestamp (Sekunden) der letzten Aktualisierung, z.B. auch bei reinen Attribut-Updates.",
+        "last_reported_ts": "Unix-Timestamp (Sekunden) des letzten gemeldeten Updates. Wird bei jedem Reporting aktualisiert, auch ohne Wertänderung.",
+        "old_state_id": "'state_id' des vorherigen Zustands (Vorgänger). Verkettet die Zustandsfolge einer Entität. Nur in älteren Versionen gefüllt.",
+        "attributes_id": "Verknüpfung zur Attribut-Tabelle ('state_attributes.attributes_id'). Enthält die JSON-Attribute des Zustands.",
+        "metadata_id": "Verknüpfung zur Entity-Metadaten-Tabelle ('states_meta.metadata_id'). Verbindet den Zustand mit der Entität.",
+        "context_id": "Kontext-ID als Text (legacy). Identifiziert, in welchem Zusammenhang (welche Automatisierung/Trigger) der Zustand entstand.",
+        "context_user_id": "User-ID des auslösenden Kontexts als Text (legacy). Leer, wenn der Zustand nicht von einem User ausgelöst wurde.",
+        "context_parent_id": "Eltern-Kontext-ID als Text (legacy). Verweist auf den übergeordneten Kontext.",
+        "origin_idx": "Ursprung des Zustands: 0 = local (lokal von HA erzeugt), 1 = remote (von außen übertragen, z.B. Mobile-App).",
+        "context_id_bin": "Kontext-ID als 16-Byte-UUID (binär). Neuere Speicherform; dient der Deduplizierung.",
+        "context_user_id_bin": "User-ID als 16-Byte-UUID (binär). Neuere Speicherform.",
+        "context_parent_id_bin": "Eltern-Kontext-ID als 16-Byte-UUID (binär). Neuere Speicherform.",
+    },
+    "state_attributes": {
+        "attributes_id": "Primärschlüssel. Eindeutige ID eines Attribut-Datenblocks.",
+        "hash": "Hash über die geteilten Attribute. Dient der Erkennung und Deduplizierung identischer Attribut-Blöcke.",
+        "shared_attrs": "JSON-kodierte Attribute, die von vielen Zuständen gemeinsam genutzt werden (Deduplizierung, spart Speicher).",
+    },
+    "event_types": {
+        "event_type_id": "Primärschlüssel. Eindeutige ID des Event-Typs.",
+        "event_type": "Name des Event-Typs, z.B. 'state_changed' oder 'homeassistant_start'. Verknüpfung (Link): Klick öffnet alle Events dieses Typs.",
+        "event_count": "Anzahl der Events dieses Typs (Zeilen in 'events'). Wird von der App berechnet (virtuelle Spalte).",
+        "new_count": "Anzahl der Events dieses Typs, die seit dem letzten 'Clean New' neu hinzugekommen sind. Virtuelle Spalte.",
+    },
+    "event_data": {
+        "data_id": "Primärschlüssel. Eindeutige ID eines Event-Payload-Blocks.",
+        "hash": "Hash über die Event-Daten. Dient der Erkennung und Deduplizierung identischer Event-Payloads.",
+        "shared_data": "JSON-kodierte Event-Daten, die von mehreren Events gemeinsam genutzt werden (Deduplizierung, spart Speicher).",
+    },
+    "events": {
+        "event_id": "Primärschlüssel. Fortlaufende, einmalige ID pro Event.",
+        "event_type": "Event-Typ als Text (legacy). In neueren HA-Versionen durch 'event_type_id' ersetzt.",
+        "event_data": "Event-Payload als JSON (legacy). In neueren HA-Versionen durch 'data_id' ersetzt.",
+        "origin": "Ursprung des Events als Text 'LOCAL'/'REMOTE' (legacy). In neueren Versionen durch 'origin_idx' ersetzt.",
+        "origin_idx": "Ursprung des Events: 0 = local (lokal von HA erzeugt), 1 = remote (von außen übertragen, z.B. Geo-Fence der Mobile-App).",
+        "time_fired": "Auslösezeitpunkt des Events als Text (legacy).",
+        "time_fired_ts": "Unix-Timestamp (Sekunden), wann das Event ausgelöst wurde. Grundlage der Event-Sortierung.",
+        "context_id": "Kontext-ID als Text (legacy). Identifiziert den Zusammenhang, in dem das Event entstand.",
+        "context_user_id": "User-ID des auslösenden Kontexts als Text (legacy). Leer, wenn kein User beteiligt war.",
+        "context_parent_id": "Eltern-Kontext-ID als Text (legacy). Verweist auf den übergeordneten Kontext.",
+        "data_id": "Verknüpfung zum Event-Payload ('event_data.data_id').",
+        "context_id_bin": "Kontext-ID als 16-Byte-UUID (binär). Neuere Speicherform.",
+        "context_user_id_bin": "User-ID als 16-Byte-UUID (binär). Neuere Speicherform.",
+        "context_parent_id_bin": "Eltern-Kontext-ID als 16-Byte-UUID (binär). Neuere Speicherform.",
+        "event_type_id": "Verknüpfung zur Event-Typ-Tabelle ('event_types.event_type_id'). Filtert die Events nach Typ.",
+    },
+    "statistics_meta": {
+        "id": "Primärschlüssel. Eindeutige ID der Statistik-Metadaten.",
+        "statistic_id": "Eindeutige ID der Statistik, z.B. 'sensor.energie_durchschnitt'. Verknüpfung (Link): Klick öffnet die Statistik-Daten.",
+        "source": "Quelle der Statistik: 'recorder' (aus dem Recorder berechnet) oder 'sensor' (direkt vom Sensor gemeldet).",
+        "unit_of_measurement": "Maßeinheit der Statistik, z.B. 'W', 'kWh' oder '°C'. Leer, wenn keine Einheit gesetzt ist.",
+        "has_mean": "Gibt an, ob ein Mittelwert gespeichert wird (1) oder nicht (0).",
+        "has_sum": "Gibt an, ob eine Summe gespeichert wird (1) oder nicht (0), z.B. bei Energiezählern.",
+        "name": "Anzeigename der Statistik, falls definiert. Kann leer sein.",
+        "mean_type": "Art des Mittelwerts, z.B. 'arithmetic' (arithmetischer Mittelwert) oder 'circular' (für zyklische Werte).",
+        "unit_class": "Klasse der Maßeinheit, z.B. 'energy', 'power', 'temperature'. Grundlage für Umrechnungen.",
+        "stat_count": "Anzahl der Statistik-Einträge (Tabelle 'statistics') für diese Statistik. Virtuelle Spalte.",
+        "short_stat_count": "Anzahl der Kurzzeit-Statistik-Einträge (Tabelle 'statistics_short_term') für diese Statistik. Virtuelle Spalte.",
+        "new_count": "Anzahl der Statistik-Einträge, die seit dem letzten 'Clean New' neu hinzugekommen sind. Virtuelle Spalte.",
+    },
+    "statistics": {
+        "id": "Primärschlüssel. Einmalige ID des Statistik-Eintrags.",
+        "created": "Erstellungszeitpunkt des Eintrags als Text (legacy).",
+        "created_ts": "Unix-Timestamp (Sekunden), wann der Eintrag erstellt wurde.",
+        "metadata_id": "Verknüpfung zur Statistik-Metadaten-Tabelle ('statistics_meta.id').",
+        "start": "Beginn des Statistik-Zeitraums als Text (legacy).",
+        "start_ts": "Unix-Timestamp (Sekunden) des Beginns des Statistik-Zeitraums.",
+        "mean": "Mittelwert über den Zeitraum (falls 'has_mean' gesetzt).",
+        "min": "Minimalwert über den Zeitraum.",
+        "max": "Maximalwert über den Zeitraum.",
+        "last_reset": "Letzter Reset-Zeitpunkt als Text (legacy).",
+        "last_reset_ts": "Unix-Timestamp des letzten Resets. Bei Zählern der Zeitpunkt, ab dem wieder bei 0 gezählt wird.",
+        "state": "Zustandswert am Ende des Zeitraums.",
+        "sum": "Summe über den Zeitraum (falls 'has_sum' gesetzt, z.B. bei Energiezählern).",
+        "mean_weight": "Gewichtung des Mittelwerts, z.B. wie viele Messwerte in den Mittelwert eingeflossen sind.",
+    },
+    "statistics_short_term": {
+        "id": "Primärschlüssel. Einmalige ID des Kurzzeit-Statistik-Eintrags.",
+        "created": "Erstellungszeitpunkt des Eintrags als Text (legacy).",
+        "created_ts": "Unix-Timestamp (Sekunden), wann der Eintrag erstellt wurde.",
+        "metadata_id": "Verknüpfung zur Statistik-Metadaten-Tabelle ('statistics_meta.id').",
+        "start": "Beginn des Kurzzeit-Zeitraums als Text (legacy).",
+        "start_ts": "Unix-Timestamp (Sekunden) des Beginns des Kurzzeit-Zeitraums.",
+        "mean": "Mittelwert über den Kurzzeit-Zeitraum.",
+        "min": "Minimalwert über den Kurzzeit-Zeitraum.",
+        "max": "Maximalwert über den Kurzzeit-Zeitraum.",
+        "last_reset": "Letzter Reset-Zeitpunkt als Text (legacy).",
+        "last_reset_ts": "Unix-Timestamp des letzten Resets.",
+        "state": "Zustandswert am Ende des Kurzzeit-Zeitraums.",
+        "sum": "Summe über den Kurzzeit-Zeitraum.",
+        "mean_weight": "Gewichtung des Mittelwerts für den Kurzzeit-Zeitraum.",
+    },
+    "statistics_runs": {
+        "run_id": "Primärschlüssel. ID des Statistik-Laufs (Kompilierung von Kurzzeit- zu Langzeit-Statistik).",
+        "start": "Startzeitpunkt des Statistik-Laufs.",
+    },
+    "recorder_runs": {
+        "run_id": "Primärschlüssel. ID eines Recorder-Laufs (entspricht einem HA-Start).",
+        "start": "Startzeitpunkt des Recorder-Laufs.",
+        "end": "Endzeitpunkt des Recorder-Laufs. NULL, wenn der Lauf (noch) aktiv ist.",
+        "closed_incorrect": "Gibt an, ob der Lauf fehlerhaft beendet wurde: 1 = Absturz/unsauberes Beenden, 0 = sauber. (Alternativname: 'closed_incorrectly'.)",
+        "closed_incorrectly": "Gibt an, ob der Lauf fehlerhaft beendet wurde: 1 = Absturz/unsauberes Beenden, 0 = sauber. (Alternativname: 'closed_incorrect'.)",
+        "created": "Erstellungszeitpunkt des Recorder-Laufs.",
+    },
+    "migration_changes": {
+        "migration_id": "Primärschlüssel. Eindeutige ID einer Schema-Migration.",
+        "migration": "Name der durchgeführten Schema-Migration (z.B. 'CreateIndex' oder eine Schema-Versionsnummer).",
+        "version": "Versionsnummer der Migration.",
+    },
+    "schema_changes": {
+        "change_id": "Primärschlüssel. Eindeutige ID einer Schema-Änderung.",
+        "schema_version": "Schema-Versionsnummer nach der Änderung.",
+        "changed": "Zeitpunkt der Schema-Änderung.",
+    },
+    "sqlite_sequence": {
+        "name": "Name einer Tabelle, deren Primärschlüssel AUTOINCREMENT nutzt. Von SQLite verwaltet, nicht von HA.",
+        "seq": "Zuletzt verwendeter AUTOINCREMENT-Wert der jeweiligen Tabelle. Von SQLite verwaltet, nicht von HA.",
+    },
+}
+
+
+def _column_info(table):
+    """Return the known per-column descriptions for a table (empty if unknown)."""
+    return COLUMN_DESCRIPTIONS.get(table, {})
 
 
 def _view_links(table):

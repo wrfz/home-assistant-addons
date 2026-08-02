@@ -168,3 +168,29 @@ def test_frontend_null_values_rendered_as_null():
     assert "NULL" in appjs.split("function buildRows(")[1].split("function buildThead(")[0]
     assert ".null-cell" in css
 
+
+def test_frontend_column_info_icon():
+    appjs = APPJS.read_text()
+    css = STYLECSS.read_text()
+    # every column header gets an info icon next to the hide button (or at the
+    # far right when the column cannot be hidden)
+    assert 'class="col-info"' in appjs
+    assert "showColumnInfo(event" in appjs
+    assert "col-info-popup" in appjs
+    # both icons are wrapped in a shared float container so they never wrap
+    # onto separate lines (the info icon sits directly left of the hide x)
+    assert "class=\"col-actions\"" in appjs
+    assert "col-actions" in css
+    # clicking the icon must not trigger the column sort
+    assert "event.stopPropagation(); showColumnInfo(" in appjs
+    # leaving the popup removes it from the DOM again
+    assert "mouseleave" in appjs
+    assert "removeColumnInfo" in appjs
+    assert ".col-info" in css
+    assert ".col-info-popup" in css
+    assert ".col-info-popup-title" in css
+    # the hide x and info icon no longer float individually (that caused them
+    # to wrap onto separate lines in narrow columns)
+    assert "th .col-hide" in css
+    assert "float: right" in css.split("th .col-actions")[1].split("th .col-hide")[0]
+

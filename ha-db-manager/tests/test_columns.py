@@ -10,6 +10,24 @@ async def test_hidden_columns_default_empty(client):
     assert data["hidden_columns"] == {}
 
 
+async def test_column_info_in_tables_meta(client):
+    r = await client.get("/api/tables")
+    assert r.status == 200
+    data = await r.json()
+    by_name = {t["name"]: t for t in data}
+    states = by_name["states"]
+    assert "column_info" in states
+    assert "state_id" in states["column_info"]
+    assert "state" in states["column_info"]
+    assert "metadata_id" in states["column_info"]
+    assert by_name["events"]["column_info"]["origin_idx"]
+    assert by_name["states_meta"]["column_info"]["entity_id"]
+    # sqlite_sequence is described too
+    assert by_name["sqlite_sequence"]["column_info"]["name"]
+    # every table ships a column_info map (possibly empty)
+    assert all("column_info" in t for t in data)
+
+
 def test_format_bytes():
     assert app_module.format_bytes(0) == "0B"
     assert app_module.format_bytes(12) == "12B"
