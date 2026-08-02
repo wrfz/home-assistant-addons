@@ -126,3 +126,26 @@ def test_frontend_clean_new_button():
     assert "tableBaseline" not in appjs
     assert "global_baseline" not in appjs
 
+
+def test_frontend_hide_columns_controls():
+    appjs = APPJS.read_text()
+    css = STYLECSS.read_text()
+    # per-column hide button in the table header routes to the backend
+    assert "function hideColumn(" in appjs
+    assert "/api/columns/hide" in appjs
+    assert "class=\"col-hide\"" in appjs
+    assert "event.stopPropagation(); hideColumn(" in appjs
+    # settings view offers the two bulk actions and shows the hidden columns
+    assert "Hide Empty Columns" in appjs
+    assert "Show All Columns" in appjs
+    assert "/api/columns/hide-empty" in appjs
+    assert "/api/columns/show-all" in appjs
+    assert "renderHiddenColumns(" in appjs
+    # the hidden columns are listed as a tree: table, then indented columns below
+    assert "hidden-table" in appjs
+    assert "hidden-col" in appjs
+    # the hide button and tree are styled
+    assert ".col-hide" in css
+    assert ".hidden-table" in css
+    assert ".hidden-col" in css
+

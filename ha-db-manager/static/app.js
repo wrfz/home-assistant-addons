@@ -123,6 +123,24 @@
             silentReload();
         }
 
+        async function hideColumn(table, key) {
+            const resp = await fetch(basePath + '/api/columns/hide', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table, column: key })
+            });
+            const body = await resp.json();
+            if (body.error) {
+                alert('Error: ' + body.error);
+                return;
+            }
+            debug(`hidden column ${table}.${key}`);
+            if (lastTable && lastTable.data && lastTable.data.table_name === table) {
+                lastTable.data.columns = lastTable.data.columns.filter(c => c !== key);
+                updateTableInPlace(lastTable.data, lastTable.pageCall);
+            }
+        }
+
         async function showHome() {
             const gen = beginView();
             setBack(null);
@@ -334,6 +352,7 @@
 
         function buildThead(data, sort, sortAction, cols) {
             const list = cols || data.columns;
+            const tableName = data.table_name;
             let thead = '<tr>';
             list.forEach(c => {
                 const key = typeof c === 'object' ? c.key : c;
@@ -345,7 +364,8 @@
                 const onclick = sortAction && sortable
                     ? `onclick="${sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
                     : '';
-                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}</th>`;
+                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}` +
+                    `<span class="col-hide" title="Hide this column" onclick="event.stopPropagation(); hideColumn('${tableName}', '${key}')">&times;</span></th>`;
             });
             return thead + '</tr>';
         }
@@ -498,6 +518,11 @@
                 '<input type="number" id="live-interval" min="1" max="60" value="3">' +
                 `<button class="top-btn" onclick="saveLiveInterval()">Save</button>` +
                 '</div>' +
+                '<div class="settings-row">' +
+                '<button class="top-btn" onclick="hideEmptyColumns()">Hide Empty Columns</button>' +
+                '<button class="top-btn" onclick="showAllColumns()">Show All Columns</button>' +
+                '</div>' +
+                '<div class="info" id="hidden-cols-info">Hidden columns: none</div>' +
                 '<div class="info" id="client-info">Loading...</div>' +
                 '</div></div>';
             document.getElementById('ts-locale').addEventListener('change', e => {
@@ -517,7 +542,50 @@
                 document.getElementById('live-interval').value = s.watch_interval;
                 document.getElementById('client-info').textContent =
                     `Active clients: ${s.clients} | watched views: ${s.views}`;
+                renderHiddenColumns(s.hidden_columns);
             } catch (err) {}
+        }
+
+        function escapeHtml(value) {
+            return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function renderHiddenColumns(hidden) {
+            const el = document.getElementById('hidden-cols-info');
+            if (!el) return;
+            const entries = Object.entries(hidden || {}).filter(([, cols]) => cols.length);
+            if (!entries.length) {
+                el.innerHTML = 'Hidden columns: none';
+                return;
+            }
+            el.innerHTML = 'Hidden columns:' +
+                entries.map(([table, cols]) =>
+                    '<div class="hidden-table">' + escapeHtml(table) +
+                    cols.map(col => '<div class="hidden-col">' + escapeHtml(col) + '</div>').join('') +
+                    '</div>'
+                ).join('');
+        }
+
+        async function hideEmptyColumns() {
+            const resp = await fetch(basePath + '/api/columns/hide-empty', { method: 'POST' });
+            const body = await resp.json();
+            if (body.error) {
+                alert('Error: ' + body.error);
+                return;
+            }
+            debug('hide empty columns -> ' + JSON.stringify(body.hidden_columns));
+            renderHiddenColumns(body.hidden_columns);
+        }
+
+        async function showAllColumns() {
+            const resp = await fetch(basePath + '/api/columns/show-all', { method: 'POST' });
+            const body = await resp.json();
+            if (body.error) {
+                alert('Error: ' + body.error);
+                return;
+            }
+            debug('show all columns -> ' + JSON.stringify(body.hidden_columns));
+            renderHiddenColumns(body.hidden_columns);
         }
 
         async function saveLiveInterval() {

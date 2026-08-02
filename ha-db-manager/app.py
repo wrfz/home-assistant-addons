@@ -363,6 +363,7 @@ async def api_table(request):
                 conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
                 filter_col, filter_value,
             )
+            columns = _visible_columns(request.app, table_name, columns)
             if establish:
                 request.app["state"]["baselines"][table_name] = baseline
                 log.info("Established new-baseline %s = %s", table_name, baseline)
@@ -416,6 +417,7 @@ async def api_table(request):
     finally:
         conn.close()
 
+    columns = _visible_columns(request.app, table_name, columns)
     log.info("Table '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
 
     data = {
@@ -450,6 +452,14 @@ DETAIL_DEFAULT_SORTS = {
     "statistics_short_term": "start_ts",
     "events": "time_fired_ts",
 }
+
+
+def _visible_columns(app, table_name, columns):
+    """Filter out columns the user has marked as hidden for this table."""
+    hidden = app["state"]["hidden_columns"].get(table_name, set())
+    if not hidden:
+        return columns
+    return [c for c in columns if c not in hidden]
 
 
 def max_id(conn, spec):
@@ -601,6 +611,9 @@ def settings_payload(app):
         "watch_interval": app["state"]["watch_interval"],
         "clients": len(app["state"].get("watch_connections", set())),
         "views": len(app["state"].get("watches", {})),
+        "hidden_columns": {
+            table: sorted(cols) for table, cols in app["state"].get("hidden_columns", {}).items()
+        },
     }
 
 
@@ -616,6 +629,13 @@ def load_settings(app):
         if interval and 1 <= interval <= 60:
             app["state"]["watch_interval"] = interval
             log.info("Loaded watch interval %d s from %s", interval, _settings_file())
+        hidden = data.get("hidden_columns")
+        if isinstance(hidden, dict):
+            app["state"]["hidden_columns"] = {
+                str(table): {str(col) for col in cols if isinstance(cols, list)}
+                for table, cols in hidden.items()
+            }
+            log.info("Loaded hidden columns for %d tables from %s", len(app["state"]["hidden_columns"]), _settings_file())
     except FileNotFoundError:
         pass
     except Exception as e:
@@ -625,7 +645,15 @@ def load_settings(app):
 def save_settings(app):
     try:
         with open(_settings_file(), "w") as f:
-            json.dump({"watch_interval": app["state"]["watch_interval"]}, f)
+            json.dump(
+                {
+                    "watch_interval": app["state"]["watch_interval"],
+                    "hidden_columns": {
+                        table: sorted(cols) for table, cols in app["state"].get("hidden_columns", {}).items()
+                    },
+                },
+                f,
+            )
     except Exception as e:
         log.warning("Could not save settings to %s: %s", _settings_file(), e)
 
@@ -642,6 +670,74 @@ async def api_clean_new(request):
     for table_name in USAGE_SPECS:
         app["state"]["baselines"][table_name] = 0
     log.info("Clean New: baselines reset to 0")
+    return web.json_response(settings_payload(app))
+
+
+def _empty_columns(conn, table):
+    """Return the columns of `table` where every row has a NULL or empty value.
+
+    Tables without any rows are skipped (nothing to inspect, hiding all their
+    columns would leave an empty table header).
+    """
+    total = db.execute(
+        conn, f"SELECT COUNT(*) AS c FROM {db.quote(table)}"
+    ).fetchone()["c"]
+    if not total:
+        return []
+    columns = db.table_columns(conn, table)
+    empty = []
+    for col in sorted(columns):
+        row = db.execute(
+            conn,
+            f"SELECT 1 AS x FROM {db.quote(table)} "
+            f"WHERE {db.quote(col)} IS NOT NULL AND {db.quote(col)} != '' LIMIT 1",
+        ).fetchone()
+        if row is None:
+            empty.append(col)
+    return empty
+
+
+async def api_column_hide(request):
+    """Hide a single column for a table (per-column x button in the header)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    table = body.get("table")
+    column = body.get("column")
+    if not table or not column:
+        return web.json_response({"error": "table and column are required"}, status=400)
+    app = request.app
+    app["state"]["hidden_columns"].setdefault(table, set()).add(column)
+    save_settings(app)
+    log.info("Hidden column %s.%s", table, column)
+    return web.json_response(settings_payload(app))
+
+
+async def api_columns_hide_empty(request):
+    """Hide every column whose rows are all empty (NULL or '')."""
+    app = request.app
+    conn = get_db()
+    try:
+        tables = db.list_tables(conn)
+        for table in tables:
+            empty = _empty_columns(conn, table)
+            if empty:
+                app["state"]["hidden_columns"].setdefault(table, set()).update(empty)
+    finally:
+        conn.close()
+    if app["state"]["hidden_columns"]:
+        save_settings(app)
+    log.info("Hidden all empty columns (%d tables affected)", len(app["state"]["hidden_columns"]))
+    return web.json_response(settings_payload(app))
+
+
+async def api_columns_show_all(request):
+    """Show all columns again: reset every hidden-column marker."""
+    app = request.app
+    app["state"]["hidden_columns"] = {}
+    save_settings(app)
+    log.info("Show all columns: hidden-column markers reset")
     return web.json_response(settings_payload(app))
 
 
@@ -684,6 +780,7 @@ def create_app():
         "watch_connections": set(),
         "watches": {},
         "baselines": {},
+        "hidden_columns": {},
     }
     load_settings(app)
     app.router.add_get("/", index)
@@ -692,6 +789,9 @@ def create_app():
     app.router.add_get("/api/settings", api_get_settings)
     app.router.add_post("/api/settings", api_set_settings)
     app.router.add_post("/api/clean-new", api_clean_new)
+    app.router.add_post("/api/columns/hide", api_column_hide)
+    app.router.add_post("/api/columns/hide-empty", api_columns_hide_empty)
+    app.router.add_post("/api/columns/show-all", api_columns_show_all)
     app.router.add_get("/api/tables", api_tables)
     app.router.add_get("/api/table/{table_name}", api_table)
     if not os.environ.get("HA_DISABLE_WATCH_LOOP"):

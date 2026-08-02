@@ -52,6 +52,13 @@ table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
 th, td { border: 1px solid var(--app-border); padding: 0.4rem 0.6rem; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 th { background: var(--app-header-bg); position: sticky; top: 0; }
 th.virtual, td.virtual { background: var(--app-virtual-bg); }
+.col-hide {
+    margin-left: 0.5rem; color: var(--app-text-secondary); cursor: pointer;
+    font-weight: bold; user-select: none;
+}
+.col-hide:hover { color: var(--app-accent); }
+.hidden-table { margin-top: 0.5rem; font-weight: bold; }
+.hidden-col { margin-left: 1.5rem; font-weight: normal; }
 tr:hover { background: var(--app-card-bg-hover); }
 .pagination { margin: 1rem 0; display: flex; gap: 0.5rem; align-items: center; }
 .pagination button {
