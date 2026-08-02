@@ -208,10 +208,12 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None):
     """Build the base SELECT of a count view (meta table + aggregated counts).
 
     Returns (sql, params). Each count table is pre-aggregated and joined to avoid
-    cross products. When `since >= 0` an additional `new_count` join (on the
-    first count table) is added. When `filter_col`/`filter_value` are given the
-    meta rows are restricted to matching values (used when navigating from a
-    child table's foreign key back to its meta row).
+    cross products. The `new_count` column is always emitted; when `since >= 0`
+    it counts rows added after `since` (per group), otherwise it is 0 for every
+    row (nothing is new relative to the current baseline). When
+    `filter_col`/`filter_value` are given the meta rows are restricted to
+    matching values (used when navigating from a child table's foreign key back
+    to its meta row).
     """
     selects = ["t.*"]
     joins = [f"FROM ({spec['base']}) t"]
@@ -239,6 +241,8 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None):
             f"ON nc.g = t.{c['group']}"
         )
         params.append(since)
+    else:
+        selects.append("0 AS new_count")
     if where:
         params.append(filter_value)
     return f"SELECT {', '.join(selects)} " + " ".join(joins) + where, params
@@ -250,14 +254,11 @@ def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
 
     Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
     the global max of the first count table's primary key (the frontend `since`
-    anchor for the `new` column). When `since >= 0` every row carries a global
-    `new_count` value (also sortable) and the `new_count` column is appended.
-    When `filter_col`/`filter_value` are given the meta rows are restricted to
-    matching values.
+    anchor for the `new` column). The `new_count` column is always present (0 for
+    every row when `since < 0`) and sortable. When `filter_col`/`filter_value`
+    are given the meta rows are restricted to matching values.
     """
-    sorts = list(spec["sorts"])
-    if since >= 0:
-        sorts.append("new_count")
+    sorts = list(spec["sorts"]) + ["new_count"]
     if sort not in sorts:
         sort = spec["default_sort"]
     if sort_dir not in ("asc", "desc"):

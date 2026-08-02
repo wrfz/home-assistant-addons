@@ -15,12 +15,13 @@ async def test_states_usage(client):
     assert data["total_rows"] == 3
     assert data["total_pages"] == 1
     assert data["global_baseline"] == 4
-    assert data["columns"] == ["metadata_id", "entity_id", "state_count", "max_state_id"]
+    assert data["columns"] == ["metadata_id", "entity_id", "state_count", "max_state_id", "new_count"]
     by_id = _rows(data)
     assert by_id["sensor.a"]["state_count"] == 2
     assert by_id["sensor.b"]["state_count"] == 1
     assert by_id["light.c"]["state_count"] == 1
     assert by_id["sensor.a"]["max_state_id"] == 2
+    assert by_id["sensor.a"]["new_count"] == 0
 
 
 async def test_states_usage_paged(client):
