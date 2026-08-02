@@ -146,14 +146,13 @@ USAGE_SPECS = {
         "base": "SELECT sm.metadata_id, sm.entity_id FROM states_meta sm",
         "counts": [
             {"table": "states", "pk": "state_id", "group": "metadata_id",
-             "count": "state_count", "max": "max_state_id"},
+             "count": "state_count"},
         ],
-        "sorts": ["metadata_id", "entity_id", "state_count", "max_state_id"],
+        "sorts": ["metadata_id", "entity_id", "state_count"],
         "default_sort": "entity_id",
         "filter_cols": ["metadata_id", "entity_id"],
         "links": {
             "entity_id": {"target": "states", "filter_col": "metadata_id", "value_col": "metadata_id"},
-            "metadata_id": {"target": "states", "filter_col": "metadata_id", "value_col": "metadata_id"},
         },
     },
     "statistics_meta": {
@@ -161,12 +160,11 @@ USAGE_SPECS = {
         "base": "SELECT sm.id AS metadata_id, sm.statistic_id FROM statistics_meta sm",
         "counts": [
             {"table": "statistics", "pk": "id", "group": "metadata_id",
-             "count": "stat_count", "max": "max_stat_id"},
+             "count": "stat_count"},
             {"table": "statistics_short_term", "pk": "id", "group": "metadata_id",
-             "count": "short_stat_count", "max": "short_max_stat_id"},
+             "count": "short_stat_count"},
         ],
-        "sorts": ["metadata_id", "statistic_id", "stat_count", "max_stat_id",
-                  "short_stat_count", "short_max_stat_id"],
+        "sorts": ["metadata_id", "statistic_id", "stat_count", "short_stat_count"],
         "default_sort": "statistic_id",
         "filter_cols": ["metadata_id", "statistic_id"],
         "links": {
@@ -180,9 +178,9 @@ USAGE_SPECS = {
         "base": "SELECT et.event_type_id, et.event_type FROM event_types et",
         "counts": [
             {"table": "events", "pk": "event_id", "group": "event_type_id",
-             "count": "event_count", "max": "max_event_id"},
+             "count": "event_count"},
         ],
-        "sorts": ["event_type_id", "event_type", "event_count", "max_event_id"],
+        "sorts": ["event_type_id", "event_type", "event_count"],
         "default_sort": "event_type",
         "filter_cols": ["event_type_id", "event_type"],
         "links": {
@@ -230,10 +228,8 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None):
     for i, c in enumerate(spec["counts"]):
         alias = f"c{i}"
         selects.append(f"COALESCE({alias}.{c['count']}, 0) AS {c['count']}")
-        selects.append(f"COALESCE({alias}.{c['max']}, 0) AS {c['max']}")
         joins.append(
-            f"LEFT JOIN (SELECT {c['group']}, COUNT(*) AS {c['count']}, "
-            f"MAX({db.quote(c['pk'])}) AS {c['max']} "
+            f"LEFT JOIN (SELECT {c['group']}, COUNT(*) AS {c['count']} "
             f"FROM {db.quote(c['table'])} GROUP BY {c['group']}) {alias} "
             f"ON {alias}.{c['group']} = t.{c['group']}"
         )

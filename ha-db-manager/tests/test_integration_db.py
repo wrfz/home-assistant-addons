@@ -168,7 +168,6 @@ async def _assert_endpoints(client):
     data = await r.json()
     by_id = {d["entity_id"]: d for d in data["rows"]}
     assert by_id["sensor.a"]["state_count"] == 2
-    assert by_id["sensor.a"]["max_state_id"] == 2
 
     r = await client.get("/api/table/states", params={"sort": "last_updated_ts", "dir": "desc"})
     data = await r.json()
