@@ -92,6 +92,39 @@ async def test_statistics_usage(client):
     assert by_id["sensor.b_mean"]["short_stat_count"] == 0
 
 
+async def test_filtered_view_returns_label(client):
+    # short-term statistics filtered by metadata_id should resolve to statistic_id
+    r = await client.get(
+        "/api/table/statistics_short_term",
+        params={"filter_col": "metadata_id", "filter_value": "1"},
+    )
+    assert r.status == 200
+    data = await r.json()
+    assert data["filter_label"] == "sensor.a_mean"
+
+    r = await client.get(
+        "/api/table/states",
+        params={"filter_col": "metadata_id", "filter_value": "1"},
+    )
+    data = await r.json()
+    assert data["filter_label"] == "sensor.a"
+
+    r = await client.get(
+        "/api/table/events",
+        params={"filter_col": "event_type_id", "filter_value": "1"},
+    )
+    data = await r.json()
+    assert data["filter_label"] == "state_changed"
+
+    # unfiltered views have no label
+    r = await client.get("/api/table/states")
+    assert (await r.json())["filter_label"] is None
+
+    # unknown filter values have no label
+    r = await client.get("/api/table/states", params={"filter_col": "metadata_id", "filter_value": "999"})
+    assert (await r.json())["filter_label"] is None
+
+
 async def test_statistics_since_new_count(client, seed_db):
     r = await client.get("/api/table/statistics_meta", params={"counts": "1", "since": "1"})
     data = await r.json()

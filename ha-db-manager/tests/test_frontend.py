@@ -90,12 +90,10 @@ def test_frontend_sort_reloads_in_place():
 
 def test_frontend_filtered_table_title_shows_filter_value():
     appjs = APPJS.read_text()
-    # linked cells pass the displayed value through to the title
+    # linked cells navigate to the target table with a filter
     assert "showLinked('${link.target}', '${link.filter_col}'" in appjs
-    assert "filterLabel" in appjs
-    # the title is composed as "<table> of `<value>`" when filtered
-    assert "`${meta.label || name} of \\`${filterLabel}\\``" in appjs
-    assert "showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter, bt.filterLabel)" in appjs
+    # the title no longer carries a client-side label, the server resolves it
+    assert "filterLabel" not in appjs
 
 
 def test_frontend_virtual_columns_styled():
@@ -105,4 +103,13 @@ def test_frontend_virtual_columns_styled():
     assert "meta.virtual_cols" in appjs
     assert "virtual.includes(key)" in appjs
     assert "th.virtual, td.virtual" in css
+
+
+def test_frontend_title_uses_server_filter_label():
+    appjs = APPJS.read_text()
+    # the title is composed from the server-provided filter_label
+    assert "data.filter_label" in appjs
+    assert "`${meta.label || name} of \\`${data.filter_label}\\``" in appjs
+    # links no longer carry a client-side label
+    assert "filterLabel" not in appjs.split("function showLinked(")[1].split("function paginationHtml(")[0]
 

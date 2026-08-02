@@ -140,6 +140,33 @@ RELATIONS = [
     {"parent": "event_data", "parent_col": "data_id", "child": "events", "child_col": "data_id"},
 ]
 
+# Resolve a filter to its human-readable label for the page title.
+# (table, filter_col) -> (label_table, label_key_col, label_col)
+LABEL_LOOKUPS = {
+    ("states", "metadata_id"): ("states_meta", "metadata_id", "entity_id"),
+    ("states_meta", "metadata_id"): ("states_meta", "metadata_id", "entity_id"),
+    ("statistics", "metadata_id"): ("statistics_meta", "id", "statistic_id"),
+    ("statistics_short_term", "metadata_id"): ("statistics_meta", "id", "statistic_id"),
+    ("statistics_meta", "metadata_id"): ("statistics_meta", "id", "statistic_id"),
+    ("events", "event_type_id"): ("event_types", "event_type_id", "event_type"),
+    ("event_types", "event_type_id"): ("event_types", "event_type_id", "event_type"),
+}
+
+
+def resolve_filter_label(conn, table, filter_col, filter_value):
+    """Return the readable label for a filtered view, or None if unknown."""
+    lookup = LABEL_LOOKUPS.get((table, filter_col))
+    if lookup is None:
+        return None
+    label_table, key_col, label_col = lookup
+    row = db.execute(
+        conn,
+        f"SELECT {db.quote(label_col)} AS label FROM {db.quote(label_table)} "
+        f"WHERE {db.quote(key_col)} = ?",
+        (filter_value,),
+    ).fetchone()
+    return row["label"] if row else None
+
 
 USAGE_SPECS = {
     "states_meta": {
@@ -330,6 +357,10 @@ async def api_table(request):
                 conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
                 filter_col, filter_value,
             )
+            filter_label = (
+                resolve_filter_label(conn, table_name, filter_col, filter_value)
+                if filter_col and filter_value is not None else None
+            )
         finally:
             conn.close()
         data = {
@@ -342,6 +373,7 @@ async def api_table(request):
             "total_rows": total_rows,
             "total_pages": total_pages,
             "global_baseline": baseline,
+            "filter_label": filter_label,
         }
         log.info("Count view '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
         return web.Response(
@@ -387,6 +419,14 @@ async def api_table(request):
         "total_rows": total_rows,
         "total_pages": total_pages,
     }
+    if filter_col and filter_value is not None:
+        conn = get_db()
+        try:
+            data["filter_label"] = resolve_filter_label(conn, table_name, filter_col, filter_value)
+        finally:
+            conn.close()
+    else:
+        data["filter_label"] = None
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
