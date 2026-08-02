@@ -170,7 +170,6 @@ USAGE_SPECS = {
         "filter_cols": ["metadata_id", "statistic_id"],
         "links": {
             "statistic_id": {"target": "statistics", "filter_col": "metadata_id", "value_col": "metadata_id"},
-            "metadata_id": {"target": "statistics", "filter_col": "metadata_id", "value_col": "metadata_id"},
             "short_stat_count": {"target": "statistics_short_term", "filter_col": "metadata_id", "value_col": "metadata_id"},
         },
     },
@@ -186,7 +185,6 @@ USAGE_SPECS = {
         "filter_cols": ["event_type_id", "event_type"],
         "links": {
             "event_type": {"target": "events", "filter_col": "event_type_id", "value_col": "event_type_id"},
-            "event_type_id": {"target": "events", "filter_col": "event_type_id", "value_col": "event_type_id"},
         },
     },
 }
