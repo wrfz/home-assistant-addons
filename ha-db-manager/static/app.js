@@ -215,13 +215,8 @@
                 : showHome);
 
             const f = normalizeFilter(filter);
-            const fresh = page === 1 && !sortKey && !sortDir && f === null;
-            if (fresh) {
-                tableBaseline = 0;
-                tableFilter = null;
-            } else if (f) {
-                tableFilter = f;
-            }
+            tableFilter = f;
+            if (!f) tableBaseline = 0;
             backTo = null;
 
             const meta = tableMeta(name);
