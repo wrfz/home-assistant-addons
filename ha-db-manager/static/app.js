@@ -193,16 +193,19 @@
 
         function tableColumns(meta, data) {
             const links = meta.links || {};
+                const virtual = meta.virtual_cols || [];
             return data.columns.map(key => {
                 const link = links[key];
+                const cls = virtual.includes(key) ? 'virtual' : '';
                 if (link) {
                     return {
                         key,
                         label: key === 'new_count' ? 'new' : key,
+                        cls,
                         click: (v, row) => `showLinked('${link.target}', '${link.filter_col}', '${String(row[link.value_col] ?? '').replace(/'/g, '&#39;')}', '${String(v ?? '').replace(/'/g, '&#39;')}')`
                     };
                 }
-                return { key, label: key === 'new_count' ? 'new' : key };
+                return { key, label: key === 'new_count' ? 'new' : key, cls };
             });
         }
 
@@ -308,12 +311,13 @@
                 let cells = '';
                 list.forEach(c => {
                     const key = typeof c === 'object' ? c.key : c;
+                    const cls = typeof c === 'object' && c.cls ? ` class="${c.cls}"` : '';
                     const raw = row[key] !== null ? row[key] : '';
                     const display = key.endsWith('_ts') ? formatTs(raw) : raw;
                     if (typeof c === 'object' && c.click && raw != null && raw !== '') {
-                        cells += `<td><a onclick="${c.click(raw, row)}">${display}</a></td>`;
+                        cells += `<td${cls}><a onclick="${c.click(raw, row)}">${display}</a></td>`;
                     } else {
-                        cells += `<td title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
+                        cells += `<td${cls} title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
                     }
                 });
                 return '<tr>' + cells + '</tr>';
@@ -326,13 +330,14 @@
             list.forEach(c => {
                 const key = typeof c === 'object' ? c.key : c;
                 const label = typeof c === 'object' ? c.label : c;
+                const cls = typeof c === 'object' && c.cls ? c.cls : '';
                 const isSorted = sort && sort.key === key;
                 const arrow = isSorted ? (sort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
                 const sortable = !(typeof c === 'object' && c.sortable === false);
                 const onclick = sortAction && sortable
                     ? `onclick="${sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
                     : '';
-                thead += `<th style="cursor:pointer" ${onclick}>${label}${arrow}</th>`;
+                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}</th>`;
             });
             return thead + '</tr>';
         }

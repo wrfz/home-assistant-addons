@@ -92,6 +92,7 @@ async def api_tables(request):
             "counts": name in USAGE_SPECS,
             "default_sort": USAGE_SPECS[name].get("default_sort") if name in USAGE_SPECS else None,
             "links": _view_links(name),
+            "virtual_cols": _virtual_cols(name),
         }
         for name in tables
     ]
@@ -206,6 +207,14 @@ def _view_links(table):
                 "target": rel["parent"], "filter_col": rel["parent_col"], "value_col": rel["child_col"],
             })
     return links
+
+
+def _virtual_cols(table):
+    """Columns of a count view that are computed, not part of the base table."""
+    spec = USAGE_SPECS.get(table)
+    if not spec:
+        return []
+    return [c["count"] for c in spec["counts"]] + ["new_count"]
 
 
 def _count_view_base(spec, since, filter_col=None, filter_value=None):

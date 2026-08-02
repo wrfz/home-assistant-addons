@@ -97,3 +97,12 @@ def test_frontend_filtered_table_title_shows_filter_value():
     assert "`${meta.label || name} of \\`${filterLabel}\\``" in appjs
     assert "showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter, bt.filterLabel)" in appjs
 
+
+def test_frontend_virtual_columns_styled():
+    appjs = APPJS.read_text()
+    css = STYLECSS.read_text()
+    # virtual (computed) columns are marked and rendered with a class
+    assert "meta.virtual_cols" in appjs
+    assert "virtual.includes(key)" in appjs
+    assert "th.virtual, td.virtual" in css
+
