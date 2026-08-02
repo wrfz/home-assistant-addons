@@ -100,31 +100,35 @@ async def api_tables(request):
     return web.json_response(data)
 
 
-def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, default_sort):
-    """Run a paged SELECT * against a table with an optional WHERE clause.
+def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, default_sort, columns=None):
+    """Run a paged SELECT against a table with an optional WHERE clause.
 
-    Returns (columns, rows, total_pages, total_rows). Sort column and direction
-    are validated against the table's columns; invalid values fall back to
-    default_sort (None means no ordering). Raises KeyError if the table does not
-    exist.
+    Only the given `columns` are fetched from the database (default: all table
+    columns). Returns (columns, rows, total_pages, total_rows). Sort column and
+    direction are validated against the selected columns; invalid values fall
+    back to default_sort (None means no ordering). Raises KeyError if the table
+    does not exist.
     """
     table_cols = db.table_columns(conn, table)
     if not table_cols:
         raise KeyError(table)
-    if sort not in table_cols:
+    if columns is None:
+        columns = sorted(table_cols)
+    if sort not in columns:
         sort = default_sort
     if sort_dir not in ("asc", "desc"):
         sort_dir = "desc"
     order_clause = ""
     if sort:
         order_clause = f' ORDER BY {db.quote(sort)} {sort_dir.upper()}'
+    select = ", ".join(db.quote(c) for c in columns)
     total_rows = db.execute(
         conn, f'SELECT COUNT(*) AS c FROM {db.quote(table)}{where}', params
     ).fetchone()["c"]
     offset = (page - 1) * page_size
     res = db.execute(
         conn,
-        f'SELECT * FROM {db.quote(table)}{where}{order_clause} LIMIT ? OFFSET ?',
+        f'SELECT {select} FROM {db.quote(table)}{where}{order_clause} LIMIT ? OFFSET ?',
         params + [page_size, offset],
     )
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
@@ -172,6 +176,7 @@ USAGE_SPECS = {
     "states_meta": {
         "label": "States",
         "base": "SELECT sm.entity_id, sm.metadata_id FROM states_meta sm",
+        "base_cols": ["entity_id", "metadata_id"],
         "counts": [
             {"table": "states", "pk": "state_id", "group": "metadata_id",
              "count": "state_count"},
@@ -186,6 +191,7 @@ USAGE_SPECS = {
     "statistics_meta": {
         "label": "Statistics",
         "base": "SELECT sm.statistic_id, sm.id AS metadata_id FROM statistics_meta sm",
+        "base_cols": ["statistic_id", "metadata_id"],
         "counts": [
             {"table": "statistics", "pk": "id", "group": "metadata_id",
              "count": "stat_count"},
@@ -203,6 +209,7 @@ USAGE_SPECS = {
     "event_types": {
         "label": "Events",
         "base": "SELECT et.event_type, et.event_type_id FROM event_types et",
+        "base_cols": ["event_type", "event_type_id"],
         "counts": [
             {"table": "events", "pk": "event_id", "group": "event_type_id",
              "count": "event_count"},
@@ -242,24 +249,37 @@ def _virtual_cols(table):
     return [c["count"] for c in spec["counts"]] + ["new_count"]
 
 
-def _count_view_base(spec, since, filter_col=None, filter_value=None):
+def _count_view_columns(spec):
+    """All columns a count view can produce (base + count names + new_count)."""
+    count_names = [c["count"] for c in spec["counts"]]
+    return list(spec["base_cols"]) + count_names + ["new_count"]
+
+
+def _count_view_base(spec, since, filter_col=None, filter_value=None, visible=None):
     """Build the base SELECT of a count view (meta table + aggregated counts).
 
-    Returns (sql, params). Each count table is pre-aggregated and joined to avoid
-    cross products. The `new_count` column is always emitted; when `since >= 0`
-    it counts rows added after `since` (per group), otherwise it is 0 for every
-    row (nothing is new relative to the current baseline). When
+    Returns (sql, params). Only the columns listed in `visible` are selected
+    (default: every column); count tables whose columns are hidden are not
+    joined at all. The `new_count` column is emitted when it is visible; when
+    `since >= 0` it counts rows added after `since` (per group), otherwise it is
+    0 for every row (nothing is new relative to the current baseline). When
     `filter_col`/`filter_value` are given the meta rows are restricted to
     matching values (used when navigating from a child table's foreign key back
     to its meta row).
     """
-    selects = ["t.*"]
+    count_names = [c["count"] for c in spec["counts"]]
+    base_names = list(spec["base_cols"])
+    if visible is None:
+        visible = base_names + count_names + ["new_count"]
+    selects = [f"t.{db.quote(c)} AS {c}" for c in base_names if c in visible]
     joins = [f"FROM ({spec['base']}) t"]
     params = []
     where = ""
     if filter_col and filter_value is not None:
         where = f" WHERE t.{db.quote(filter_col)} = ?"
     for i, c in enumerate(spec["counts"]):
+        if c["count"] not in visible:
+            continue
         alias = f"c{i}"
         selects.append(f"COALESCE({alias}.{c['count']}, 0) AS {c['count']}")
         joins.append(
@@ -267,39 +287,42 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None):
             f"FROM {db.quote(c['table'])} GROUP BY {c['group']}) {alias} "
             f"ON {alias}.{c['group']} = t.{c['group']}"
         )
-    if since >= 0:
-        c = spec["counts"][0]
-        selects.append("COALESCE(nc.new_count, 0) AS new_count")
-        joins.append(
-            f"LEFT JOIN (SELECT {c['group']} AS g, COUNT(*) AS new_count "
-            f"FROM {db.quote(c['table'])} "
-            f"WHERE {db.quote(c['pk'])} > ? GROUP BY {c['group']}) nc "
-            f"ON nc.g = t.{c['group']}"
-        )
-        params.append(since)
-    else:
-        selects.append("0 AS new_count")
+    if "new_count" in visible:
+        if since >= 0:
+            c = spec["counts"][0]
+            selects.append("COALESCE(nc.new_count, 0) AS new_count")
+            joins.append(
+                f"LEFT JOIN (SELECT {c['group']} AS g, COUNT(*) AS new_count "
+                f"FROM {db.quote(c['table'])} "
+                f"WHERE {db.quote(c['pk'])} > ? GROUP BY {c['group']}) nc "
+                f"ON nc.g = t.{c['group']}"
+            )
+            params.append(since)
+        else:
+            selects.append("0 AS new_count")
     if where:
         params.append(filter_value)
     return f"SELECT {', '.join(selects)} " + " ".join(joins) + where, params
 
 
 def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
-                     filter_col=None, filter_value=None):
+                     filter_col=None, filter_value=None, visible=None):
     """Run a paged count view for a meta table (see USAGE_SPECS).
 
     Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
     the global max of the first count table's primary key (the frontend `since`
-    anchor for the `new` column). The `new_count` column is always present (0 for
-    every row when `since < 0`) and sortable. When `filter_col`/`filter_value`
-    are given the meta rows are restricted to matching values.
+    anchor for the `new` column). Only the columns listed in `visible` are
+    fetched (default: every column); a sort on a hidden column falls back to the
+    spec's default sort. When `filter_col`/`filter_value` are given the meta
+    rows are restricted to matching values.
     """
-    sorts = list(spec["sorts"]) + ["new_count"]
-    if sort not in sorts:
-        sort = spec["default_sort"]
+    if visible is None:
+        visible = _count_view_columns(spec)
+    if sort not in visible:
+        sort = spec["default_sort"] if spec["default_sort"] in visible else visible[0]
     if sort_dir not in ("asc", "desc"):
         sort_dir = "desc"
-    base, base_params = _count_view_base(spec, since, filter_col, filter_value)
+    base, base_params = _count_view_base(spec, since, filter_col, filter_value, visible)
     total_rows = db.execute(
         conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t", base_params
     ).fetchone()["c"]
@@ -359,11 +382,12 @@ async def api_table(request):
                 if since <= 0:
                     since = -1
                     establish = True
+            hidden = request.app["state"]["hidden_columns"].get(table_name, set())
+            visible = [c for c in _count_view_columns(spec) if c not in hidden]
             columns, rows, total_pages, total_rows, baseline = count_view_paged(
                 conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
-                filter_col, filter_value,
+                filter_col, filter_value, visible,
             )
-            columns = _visible_columns(request.app, table_name, columns)
             if establish:
                 request.app["state"]["baselines"][table_name] = baseline
                 log.info("Established new-baseline %s = %s", table_name, baseline)
@@ -397,6 +421,8 @@ async def api_table(request):
     except Exception:
         conn.close()
         return web.json_response({"error": "Table not found"}, status=404)
+    hidden = request.app["state"]["hidden_columns"].get(table_name, set())
+    visible = [c for c in sorted(table_cols) if c not in hidden]
     try:
         if filter_col and filter_value is not None:
             if filter_col not in table_cols:
@@ -405,10 +431,12 @@ async def api_table(request):
                 conn, table_name,
                 f" WHERE {db.quote(filter_col)} = ?", [filter_value],
                 page, page_size, sort, sort_dir, DETAIL_DEFAULT_SORTS.get(table_name),
+                visible,
             )
         else:
             columns, rows, total_pages, total_rows = query_paged(
-                conn, table_name, "", [], page, page_size, sort, sort_dir, None
+                conn, table_name, "", [], page, page_size, sort, sort_dir, None,
+                visible,
             )
     except KeyError:
         conn.close()
@@ -417,7 +445,6 @@ async def api_table(request):
     finally:
         conn.close()
 
-    columns = _visible_columns(request.app, table_name, columns)
     log.info("Table '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
 
     data = {
@@ -454,14 +481,6 @@ DETAIL_DEFAULT_SORTS = {
 }
 
 
-def _visible_columns(app, table_name, columns):
-    """Filter out columns the user has marked as hidden for this table."""
-    hidden = app["state"]["hidden_columns"].get(table_name, set())
-    if not hidden:
-        return columns
-    return [c for c in columns if c not in hidden]
-
-
 def max_id(conn, spec):
     table = spec.get("table")
     if spec.get("counts") and table in USAGE_SPECS:
@@ -484,18 +503,20 @@ def max_id(conn, spec):
     return db.max_row_id(conn, table)
 
 
-def page_signature(conn, spec):
+def page_signature(conn, spec, hidden=None):
     table = spec.get("table")
     page = parse_int(spec.get("page"), 1)
     page_size = parse_int(spec.get("page_size"), 100)
     sort = spec.get("sort")
     sort_dir = spec.get("dir") or "asc"
+    hidden = hidden or {}
     if spec.get("counts") and table in USAGE_SPECS:
+        visible = [c for c in _count_view_columns(USAGE_SPECS[table]) if c not in hidden.get(table, set())]
         columns, rows, total_pages, total_rows, baseline = count_view_paged(
             conn, USAGE_SPECS[table], page, page_size,
             sort or USAGE_SPECS[table]["default_sort"], sort_dir,
             parse_int(spec.get("since"), -1),
-            spec.get("filter_col"), spec.get("filter_value"),
+            spec.get("filter_col"), spec.get("filter_value"), visible,
         )
         payload = json.dumps([total_rows] + [dict(r) for r in rows], cls=SafeEncoder, sort_keys=True)
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
@@ -507,28 +528,30 @@ def page_signature(conn, spec):
     if filter_col and filter_value is not None:
         where = f" WHERE {db.quote(filter_col)} = ?"
         params = [filter_value]
-    table_cols = db.table_columns(conn, table)
+    table_cols = sorted(db.table_columns(conn, table))
+    columns = [c for c in table_cols if c not in hidden.get(table, set())]
     order_clause = ""
-    if sort in table_cols and sort_dir in ("asc", "desc"):
+    if sort in columns and sort_dir in ("asc", "desc"):
         order_clause = f' ORDER BY {db.quote(sort)} {sort_dir.upper()}'
 
     total = db.execute(
         conn, f'SELECT COUNT(*) AS c FROM {db.quote(table)}{where}', params
     ).fetchone()["c"]
     offset = (page - 1) * page_size
+    select = ", ".join(db.quote(c) for c in columns)
     rows = db.execute(
         conn,
-        f'SELECT * FROM {db.quote(table)}{where}{order_clause} LIMIT ? OFFSET ?',
+        f'SELECT {select} FROM {db.quote(table)}{where}{order_clause} LIMIT ? OFFSET ?',
         params + [page_size, offset],
     ).fetchall()
     payload = json.dumps([total] + [dict(r) for r in rows], cls=SafeEncoder, sort_keys=True)
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
 
-def check_view_changed(conn, spec, state):
+def check_view_changed(conn, spec, state, hidden=None):
     is_stats = spec.get("counts") or spec.get("table") in STATS_TABLES
     mid = max_id(conn, spec)
-    sig = page_signature(conn, spec) if is_stats else None
+    sig = page_signature(conn, spec, hidden) if is_stats else None
     if mid is None:
         state["max_id"] = None
         state["sig"] = sig
@@ -596,7 +619,9 @@ async def watch_loop(app):
             try:
                 conn = get_db()
                 try:
-                    changed = check_view_changed(conn, watch["spec"], watch["state"])
+                    changed = check_view_changed(
+                        conn, watch["spec"], watch["state"], app["state"]["hidden_columns"]
+                    )
                 finally:
                     conn.close()
                 if changed:

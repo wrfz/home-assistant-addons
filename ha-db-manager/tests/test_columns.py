@@ -1,5 +1,8 @@
 import json
 
+import db
+import app as app_module
+
 
 async def test_hidden_columns_default_empty(client):
     r = await client.get("/api/settings")
@@ -84,6 +87,46 @@ async def test_hidden_columns_persisted_across_reboot(client, tmp_path, monkeypa
 
     app2 = app_module.create_app()
     assert app2["state"]["hidden_columns"]["states"] == {"entity_id"}
+
+
+async def test_hidden_columns_not_selected_in_sql(client, monkeypatch):
+    await client.post("/api/columns/hide", json={"table": "states", "column": "entity_id"})
+    statements = []
+    real_execute = db.execute
+
+    def capture(conn, sql, params=None):
+        statements.append(sql)
+        return real_execute(conn, sql, params)
+
+    monkeypatch.setattr(db, "execute", capture)
+    r = await client.get("/api/table/states")
+    assert r.status == 200
+    data = await r.json()
+    assert "entity_id" not in data["columns"]
+    selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    assert selects, "expected a SELECT statement"
+    # the hidden column must not appear in any SELECT column list
+    for sql in selects:
+        assert "entity_id" not in sql
+
+
+async def test_hidden_count_column_not_joined_in_sql(client, monkeypatch):
+    await client.post("/api/columns/hide", json={"table": "states_meta", "column": "new_count"})
+    statements = []
+    real_execute = db.execute
+
+    def capture(conn, sql, params=None):
+        statements.append(sql)
+        return real_execute(conn, sql, params)
+
+    monkeypatch.setattr(db, "execute", capture)
+    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+    assert r.status == 200
+    data = await r.json()
+    assert "new_count" not in data["columns"]
+    assert "state_count" in data["columns"]
+    joins = " ".join(statements)
+    assert "new_count" not in joins
 
 
 async def test_show_all_columns_persisted_across_reboot(client, tmp_path, monkeypatch):
