@@ -177,7 +177,7 @@ def test_frontend_column_info_icon():
     assert 'class="col-info"' in appjs
     assert "showColumnInfo(event" in appjs
     assert "col-info-popup" in appjs
-    # both icons are wrapped in a shared float container so they never wrap
+    # both icons are wrapped in a shared container so they never wrap
     # onto separate lines (the info icon sits directly left of the hide x)
     assert "class=\"col-actions\"" in appjs
     assert "col-actions" in css
@@ -189,8 +189,10 @@ def test_frontend_column_info_icon():
     assert ".col-info" in css
     assert ".col-info-popup" in css
     assert ".col-info-popup-title" in css
-    # the hide x and info icon no longer float individually (that caused them
-    # to wrap onto separate lines in narrow columns)
+    # the header cell is a flex row: the label shrinks (with ellipsis) and the
+    # action icons stay fixed on the right, so nothing wraps onto a second line
     assert "th .col-hide" in css
-    assert "float: right" in css.split("th .col-actions")[1].split("th .col-hide")[0]
+    assert "flex: 0 0 auto" in css.split("th .col-actions")[1].split("th .col-hide")[0]
+    assert ".col-label" in css
+    assert "text-overflow: ellipsis" in css.split("th .col-label")[1].split("th .col-actions")[0]
 

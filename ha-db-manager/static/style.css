@@ -55,9 +55,16 @@ th.virtual, td.virtual { background: var(--app-virtual-bg); }
 td .null-cell {
     color: var(--app-text-secondary); font-style: italic; opacity: 0.8;
 }
+th .th-inner {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+}
+th .col-label {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 th .col-actions {
-    float: right; margin-left: 0.5rem; display: inline-flex;
-    white-space: nowrap; vertical-align: middle; gap: 0.2rem;
+    flex: 0 0 auto;
+    display: inline-flex; white-space: nowrap; gap: 0.2rem;
 }
 th .col-hide {
     color: var(--app-text-secondary);
@@ -65,16 +72,18 @@ th .col-hide {
     display: inline-block; width: 1.7rem; box-sizing: border-box;
     padding: 0.15rem 0; line-height: 1.2; text-align: center;
     border-radius: 4px; background: var(--app-card-bg-hover);
+    border: 1px solid var(--app-border);
 }
-.col-hide:hover { color: var(--app-accent); background: var(--app-card-bg-hover); }
+.col-hide:hover { color: var(--app-accent); border-color: var(--app-accent); }
 th .col-info {
     color: var(--app-text-secondary);
     cursor: pointer; font-weight: bold; user-select: none;
     display: inline-block; width: 1.7rem; box-sizing: border-box;
     padding: 0.15rem 0; line-height: 1.2; text-align: center;
     border-radius: 4px; background: var(--app-card-bg-hover);
+    border: 1px solid var(--app-border);
 }
-.col-info:hover { color: var(--app-accent); background: var(--app-card-bg-hover); }
+.col-info:hover { color: var(--app-accent); border-color: var(--app-accent); }
 .col-info-popup {
     position: fixed; z-index: 10000; max-width: 24rem;
     background: var(--app-card-bg); color: var(--app-text);

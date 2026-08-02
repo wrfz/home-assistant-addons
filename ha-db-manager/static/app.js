@@ -414,7 +414,7 @@
                 const hide = protectedCols.includes(key) ? '' :
                     `<span class="col-hide" title="Hide this column" onclick="event.stopPropagation(); hideColumn('${tableName}', '${key}')">&times;</span>`;
                 const actions = `<span class="col-actions">${info}${hide}</span>`;
-                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}${actions}</th>`;
+                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}><span class="th-inner"><span class="col-label">${label}${arrow}</span>${actions}</span></th>`;
             });
             return thead + '</tr>';
         }

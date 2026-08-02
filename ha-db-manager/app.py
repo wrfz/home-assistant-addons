@@ -1005,7 +1005,8 @@ def create_app():
 
 if __name__ == "__main__":
     backend = db.get_backend()
-    log.info("Starting Home Assistant DB Manager on port 8099")
+    port = int(os.environ.get("HA_PORT", "8099"))
+    log.info("Starting Home Assistant DB Manager on port %s", port)
     log.info("Database backend: %s (%s)", backend.kind, backend.display_name())
     app = create_app()
-    web.run_app(app, port=8099)
+    web.run_app(app, port=port)
