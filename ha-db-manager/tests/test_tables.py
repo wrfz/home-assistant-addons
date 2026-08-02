@@ -13,7 +13,11 @@ async def test_list_tables(client):
     # count views are marked and carry default sort / links metadata
     by_name = {t["name"]: t for t in tables}
     assert by_name["states_meta"]["counts"] is True
+    assert by_name["states_meta"]["label"] == "States"
+    assert by_name["statistics_meta"]["label"] == "Statistics"
+    assert by_name["event_types"]["label"] == "Events"
     assert by_name["states_meta"]["default_sort"] == "entity_id"
+    assert by_name["states"]["label"] is None
     assert "entity_id" in by_name["states_meta"]["links"]
     assert by_name["states"]["counts"] is False
     assert by_name["states"]["links"]["metadata_id"]["target"] == "states_meta"

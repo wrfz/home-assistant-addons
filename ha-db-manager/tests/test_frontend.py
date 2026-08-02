@@ -59,3 +59,12 @@ def test_frontend_has_generic_table_links():
     assert "function showLinked(" in appjs
     assert "tableFilter" in appjs
     assert "counts" in appjs
+
+
+def test_frontend_meta_tables_first_with_labels():
+    appjs = APPJS.read_text()
+    assert "t.counts" in appjs
+    assert "table-gap" in appjs
+    # count views use their friendly label, no "(counts)" suffix remains
+    assert "t.label || t.name" in appjs
+    assert "' (counts)'" not in appjs

@@ -86,6 +86,7 @@ async def api_tables(request):
     data = [
         {
             "name": name,
+            "label": USAGE_SPECS[name].get("label") if name in USAGE_SPECS else None,
             "counts": name in USAGE_SPECS,
             "default_sort": USAGE_SPECS[name].get("default_sort") if name in USAGE_SPECS else None,
             "links": _view_links(name),
@@ -139,6 +140,7 @@ RELATIONS = [
 
 USAGE_SPECS = {
     "states_meta": {
+        "label": "States",
         "base": "SELECT sm.metadata_id, sm.entity_id FROM states_meta sm",
         "counts": [
             {"table": "states", "pk": "state_id", "group": "metadata_id",
@@ -153,6 +155,7 @@ USAGE_SPECS = {
         },
     },
     "statistics_meta": {
+        "label": "Statistics",
         "base": "SELECT sm.id AS metadata_id, sm.statistic_id FROM statistics_meta sm",
         "counts": [
             {"table": "statistics", "pk": "id", "group": "metadata_id",
@@ -171,6 +174,7 @@ USAGE_SPECS = {
         },
     },
     "event_types": {
+        "label": "Events",
         "base": "SELECT et.event_type_id, et.event_type FROM event_types et",
         "counts": [
             {"table": "events", "pk": "event_id", "group": "event_type_id",

@@ -121,11 +121,23 @@
             const tables = await loadTablesMeta();
             if (!isCurrentView(gen)) return;
 
+            const meta = tables.filter(t => t.counts);
+            const rest = tables.filter(t => !t.counts);
+
             let html = '<div class="menu-section"><h2>Tables</h2><div class="button-grid">';
-            for (const t of tables) {
-                html += `<button class="nav-button" onclick="showTable('${t.name}', 1, '', '', null)">${t.name}${t.counts ? ' (counts)' : ''}</button>`;
+            for (const t of meta) {
+                html += `<button class="nav-button" onclick="showTable('${t.name}', 1, '', '', null)">${t.label || t.name}</button>`;
             }
             html += '</div></div>';
+
+            if (rest.length) {
+                html += '<div class="table-gap"></div>';
+                html += '<div class="menu-section"><div class="button-grid">';
+                for (const t of rest) {
+                    html += `<button class="nav-button" onclick="showTable('${t.name}', 1, '', '', null)">${t.name}</button>`;
+                }
+                html += '</div></div>';
+            }
 
             html += '<div class="menu-section"><h2>Settings</h2><div class="button-grid">';
             html += `<button class="nav-button" onclick="showSettings()">Settings</button>`;
@@ -214,7 +226,7 @@
             const sd = sortDir || (counts ? 'asc' : null);
             tableState = { name, page, sortKey: sk, sortDir: sd, filter: tableFilter };
 
-            document.getElementById('title').textContent = name;
+            document.getElementById('title').textContent = meta.label || name;
             showLoading();
             const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(name, counts, page, sk, sd)}`);
             const data = await fetchFn();
