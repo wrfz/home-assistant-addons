@@ -165,7 +165,7 @@ async def _assert_endpoints(client):
     r = await client.get("/api/states")
     assert r.status == 200
     data = await r.json()
-    by_id = {d["entity_id"]: d for d in data}
+    by_id = {d["entity_id"]: d for d in data["rows"]}
     assert by_id["sensor.a"]["state_count"] == 2
     assert by_id["sensor.a"]["max_state_id"] == 2
 
@@ -181,11 +181,11 @@ async def _assert_endpoints(client):
 
     r = await client.get("/api/statistics")
     data = await r.json()
-    assert {d["statistic_id"]: d["stat_count"] for d in data}["sensor.a_mean"] == 2
+    assert {d["statistic_id"]: d["stat_count"] for d in data["rows"]}["sensor.a_mean"] == 2
 
     r = await client.get("/api/statistics-short-term")
     data = await r.json()
-    by_id = {d["statistic_id"]: d for d in data}
+    by_id = {d["statistic_id"]: d for d in data["rows"]}
     assert by_id["sensor.a_mean"]["stat_count"] == 1
     assert by_id["sensor.b_mean"]["stat_count"] == 0
 
@@ -195,7 +195,7 @@ async def _assert_endpoints(client):
 
     r = await client.get("/api/event-types")
     data = await r.json()
-    assert {d["event_type"]: d["event_count"] for d in data}["state_changed"] == 2
+    assert {d["event_type"]: d["event_count"] for d in data["rows"]}["state_changed"] == 2
 
     r = await client.get("/api/settings")
     assert (await r.json())["watch_interval"] == 3

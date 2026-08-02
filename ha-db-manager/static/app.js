@@ -113,7 +113,6 @@
             setBack(null);
             setViewSpec(null);
             lastTable = null;
-            usageViewActive = false;
             stopSettingsRefresh();
             document.getElementById('title').textContent = 'Home Assistant DB Manager';
 
@@ -135,10 +134,7 @@
             document.getElementById('content').innerHTML = html;
         }
 
-        let usageData = [];
         let usageConfig = null;
-        let usageSortKey = null;
-        let usageSortDir = 'asc';
 
         const statesConfig = {
             listEndpoint: '/api/states',
@@ -201,109 +197,50 @@
         };
 
         let usageGlobalBaseline = 0;
-        let usageViewActive = false;
 
-        function usageValue(e, key) {
-            if (key === '__new__') return e['new_count'] || 0;
-            return e[key];
+        function usageColumns(config, data) {
+            const cols = [];
+            for (const c of config.columns) {
+                if (c.key === '__new__') {
+                    if (data.columns.includes('new_count')) cols.push({ key: 'new_count', label: c.label, sortable: false });
+                } else if (data.columns.includes(c.key)) {
+                    cols.push(c);
+                }
+            }
+            return cols;
         }
 
-        async function usageReload() {
-            if (!usageConfig) return;
-            const gen = viewGen;
-            try {
-                const data = await api(usageConfig.listEndpoint + '?since=' + usageGlobalBaseline);
-                if (!isCurrentView(gen) || !usageConfig) return;
-                let changed = data.length !== usageData.length;
-                if (!changed) {
-                    for (let i = 0; i < data.length; i++) {
-                        if ((data[i]['new_count'] || 0) !== (usageData[i]['new_count'] || 0)) {
-                            changed = true;
-                            break;
-                        }
-                    }
-                }
-                if (changed) {
-                    usageData = data;
-                    renderUsage();
-                    const topNew = usageData
-                        .map(e => ({
-                            id: e[usageConfig.idKey],
-                            max: e[usageConfig.childMaxKey],
-                            new: e['new_count'] || 0
-                        }))
-                        .sort((a, b) => b.new - a.new)
-                        .slice(0, 3);
-                    debug(`usage reload '${usageConfig.label}' | top new: ` + JSON.stringify(topNew));
-                }
-            } catch (err) {}
+        function usageQuery(page, sortKey, sortDir) {
+            const qs = new URLSearchParams({ page, page_size: 100, sort: sortKey, dir: sortDir });
+            if (usageGlobalBaseline > 0) qs.set('since', usageGlobalBaseline);
+            return qs;
         }
 
-        async function showUsageView(title, config) {
+        async function showUsageView(title, config, page, sortKey, sortDir) {
             const gen = beginView();
             setBack(showHome);
             lastTable = null;
-            usageViewActive = false;
             stopSettingsRefresh();
             document.getElementById('title').textContent = title;
             showLoading();
-            usageData = await api(config.listEndpoint);
-            if (!isCurrentView(gen)) return;
             usageConfig = config;
-            usageSortKey = config.sortKey;
-            usageSortDir = 'asc';
-            usageGlobalBaseline = usageData.reduce((m, e) => Math.max(m, e[config.childMaxKey] || 0), 0);
-            debug(`usage open '${title}': ${usageData.length} rows | globalBaseline=${usageGlobalBaseline} | sample ` +
-                JSON.stringify(usageData.slice(0, 3).map(e => ({
-                    id: e[config.idKey],
-                    max: e[config.childMaxKey]
-                }))));
-            renderUsage();
-            usageViewActive = true;
-            setViewSpec({ kind: 'usage', table: config.watchTable, page: 1, page_size: 1, sort: null, dir: null });
-        }
-
-        function sortUsage(key) {
-            if (usageSortKey === key) {
-                usageSortDir = usageSortDir === 'asc' ? 'desc' : 'asc';
-            } else {
-                usageSortKey = key;
-                usageSortDir = 'asc';
-            }
-            renderUsage();
-        }
-
-        function renderUsage() {
-            const columns = usageConfig.columns;
-            const sorted = [...usageData].sort((a, b) => {
-                const va = usageValue(a, usageSortKey);
-                const vb = usageValue(b, usageSortKey);
-                const dir = usageSortDir === 'asc' ? 1 : -1;
-                if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
-                return String(va ?? '').localeCompare(String(vb ?? '')) * dir;
-            });
-
-            const arrow = usageSortDir === 'asc' ? ' &#9650;' : ' &#9660;';
-            const thead = columns.map(c =>
-                `<th style="cursor:pointer" onclick="sortUsage('${c.key}')">${c.label}${usageSortKey === c.key ? arrow : ''}</th>`
-            ).join('');
-
-            const rows = sorted.map(e => {
-                let cells = '';
-                for (const c of columns) {
-                    const val = usageValue(e, c.key);
-                    if (c.click && val != null) {
-                        cells += `<td><a onclick="${c.click(val)}">${val}</a></td>`;
-                    } else {
-                        cells += `<td>${val != null ? val : ''}</td>`;
-                    }
-                }
-                return '<tr>' + cells + '</tr>';
-            }).join('');
-
-            document.getElementById('content').innerHTML =
-                `<div class="info">${usageData.length} ${usageConfig.label}</div>` +
-                '<div class="container"><table><thead><tr>' + thead + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+            const pageNo = page || 1;
+            const sk = sortKey || config.sortKey;
+            const sd = sortDir || 'asc';
+            const fetchFn = () => api(config.listEndpoint + '?' + usageQuery(pageNo, sk, sd));
+            const data = await fetchFn();
+            if (!isCurrentView(gen)) return;
+            if (data.global_baseline) usageGlobalBaseline = data.global_baseline;
+            debug(`usage open '${title}': ${data.total_rows} ${config.label} | page ${pageNo}/${data.total_pages} | globalBaseline=${usageGlobalBaseline}`);
+            renderTablePage(
+                data,
+                p => `showUsageView('${title}', usageConfig, ${p}, '${sk}', '${sd}')`,
+                { key: sk, dir: sd },
+                (k, d) => `showUsageView('${title}', usageConfig, 1, '${k}', '${d}')`,
+                fetchFn,
+                d => usageColumns(config, d)
+            );
+            setViewSpec({ kind: 'usage', table: config.watchTable, page: pageNo, page_size: 100, sort: sk, dir: sd });
         }
 
         async function showTables() {
@@ -311,7 +248,6 @@
             setBack(showHome);
             setViewSpec(null);
             lastTable = null;
-            usageViewActive = false;
             stopSettingsRefresh();
             document.getElementById('title').textContent = 'All Tables';
             showLoading();
@@ -329,38 +265,49 @@
                 `<button onclick="${pageCall(data.page + 1)}" ${data.page >= data.total_pages ? 'disabled' : ''}>Next &raquo;</button>`;
         }
 
-        function buildRows(data) {
+        function buildRows(data, cols) {
+            const list = cols || data.columns;
             return data.rows.map(row => {
                 let cells = '';
-                data.columns.forEach(c => {
-                    const raw = row[c] !== null ? row[c] : '';
-                    const display = c.endsWith('_ts') ? formatTs(raw) : raw;
-                    cells += `<td title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
+                list.forEach(c => {
+                    const key = typeof c === 'object' ? c.key : c;
+                    const raw = row[key] !== null ? row[key] : '';
+                    const display = key.endsWith('_ts') ? formatTs(raw) : raw;
+                    if (typeof c === 'object' && c.click && raw != null && raw !== '') {
+                        cells += `<td><a onclick="${c.click(raw)}">${display}</a></td>`;
+                    } else {
+                        cells += `<td title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
+                    }
                 });
                 return '<tr>' + cells + '</tr>';
             }).join('');
         }
 
-        function buildThead(data, sort, sortAction) {
+        function buildThead(data, sort, sortAction, cols) {
+            const list = cols || data.columns;
             let thead = '<tr>';
-            data.columns.forEach(c => {
-                const isSorted = sort && sort.key === c;
+            list.forEach(c => {
+                const key = typeof c === 'object' ? c.key : c;
+                const label = typeof c === 'object' ? c.label : c;
+                const isSorted = sort && sort.key === key;
                 const arrow = isSorted ? (sort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
-                const onclick = sortAction
-                    ? `onclick="${sortAction(c, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
+                const sortable = !(typeof c === 'object' && c.sortable === false);
+                const onclick = sortAction && sortable
+                    ? `onclick="${sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
                     : '';
-                thead += `<th style="cursor:pointer" ${onclick}>${c}${arrow}</th>`;
+                thead += `<th style="cursor:pointer" ${onclick}>${label}${arrow}</th>`;
             });
             return thead + '</tr>';
         }
 
-        function renderTablePage(data, pageCall, sort, sortAction, silentFetch) {
-            lastTable = { data, pageCall, sort, sortAction, silentFetch };
+        function renderTablePage(data, pageCall, sort, sortAction, silentFetch, colsFn) {
+            const cols = colsFn ? colsFn(data) : null;
+            lastTable = { data, pageCall, sort, sortAction, silentFetch, colsFn };
             document.getElementById('content').innerHTML =
                 `<div class="info" id="info-el">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>` +
                 `<div class="pagination" id="pag-top">${paginationHtml(data, pageCall)}</div>` +
-                '<div class="container"><table><thead id="thead-el">' + buildThead(data, sort, sortAction) + '</thead>' +
-                '<tbody id="tbody-el">' + buildRows(data) + '</tbody></table></div>' +
+                '<div class="container"><table><thead id="thead-el">' + buildThead(data, sort, sortAction, cols) + '</thead>' +
+                '<tbody id="tbody-el">' + buildRows(data, cols) + '</tbody></table></div>' +
                 `<div class="pagination" id="pag-bottom">${paginationHtml(data, pageCall)}</div>`;
         }
 
@@ -368,12 +315,14 @@
             if (!lastTable) return;
             lastTable.data = data;
             lastTable.pageCall = pageCall;
+            const cols = lastTable.colsFn ? lastTable.colsFn(data) : null;
             document.getElementById('info-el').textContent =
                 `${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}`;
             const pag = paginationHtml(data, pageCall);
             document.getElementById('pag-top').innerHTML = pag;
             document.getElementById('pag-bottom').innerHTML = pag;
-            document.getElementById('tbody-el').innerHTML = buildRows(data);
+            document.getElementById('thead-el').innerHTML = buildThead(data, lastTable.sort, lastTable.sortAction, cols);
+            document.getElementById('tbody-el').innerHTML = buildRows(data, cols);
         }
 
         async function silentReload() {
@@ -408,13 +357,8 @@
         let currentViewSpec = null;
 
         function refresh() {
-            if (usageViewActive) {
-                debug('refresh button pressed');
-                usageReload();
-            } else {
-                debug('refresh button pressed');
-                silentReload();
-            }
+            debug('refresh button pressed');
+            silentReload();
         }
 
         function toggleLive() {
@@ -439,8 +383,7 @@
                 try {
                     const msg = JSON.parse(e.data);
                     if (msg.type === 'reload') {
-                        if (usageViewActive) usageReload();
-                        else silentReload();
+                        silentReload();
                     }
                 } catch (err) {}
             };
@@ -481,7 +424,6 @@
             setBack(showHome);
             setViewSpec(null);
             lastTable = null;
-            usageViewActive = false;
             stopSettingsRefresh();
             document.getElementById('title').textContent = 'Settings';
             const opts = localeOptions.map(o =>
@@ -577,7 +519,6 @@
         async function showTable(name, page, sortKey, sortDir) {
             const gen = beginView();
             setBack(showTables);
-            usageViewActive = false;
             stopSettingsRefresh();
             setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = name;
@@ -597,7 +538,6 @@
         async function showEntityStates(entity_id, page, sortKey, sortDir) {
             const gen = beginView();
             setBack(() => showUsageView('States', statesConfig));
-            usageViewActive = false;
             stopSettingsRefresh();
             setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = entity_id;
@@ -619,7 +559,6 @@
             const config = shortTerm ? statisticsShortTermConfig : statisticsConfig;
             const gen = beginView();
             setBack(() => showUsageView(shortTerm ? 'Statistics Short Term' : 'Statistics', config));
-            usageViewActive = false;
             stopSettingsRefresh();
             setViewSpec({ kind: 'statistic', table, id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = statistic_id;
@@ -639,7 +578,6 @@
         async function showEventTypeData(event_type, page, sortKey, sortDir) {
             const gen = beginView();
             setBack(() => showUsageView('Events', eventsConfig));
-            usageViewActive = false;
             stopSettingsRefresh();
             setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
             document.getElementById('title').textContent = event_type;

@@ -1,22 +1,50 @@
 import sqlite3
 
 
+def _rows(data):
+    return {r["entity_id"]: r for r in data["rows"]}
+
+
 async def test_states_usage(client):
     r = await client.get("/api/states")
     assert r.status == 200
     data = await r.json()
-    by_id = {d["entity_id"]: d for d in data}
-    assert len(by_id) == 3
+    assert data["page"] == 1
+    assert data["page_size"] == 100
+    assert data["total_rows"] == 3
+    assert data["total_pages"] == 1
+    assert data["global_baseline"] == 4
+    assert data["columns"] == ["metadata_id", "entity_id", "state_count", "max_state_id"]
+    by_id = _rows(data)
     assert by_id["sensor.a"]["state_count"] == 2
     assert by_id["sensor.b"]["state_count"] == 1
     assert by_id["light.c"]["state_count"] == 1
     assert by_id["sensor.a"]["max_state_id"] == 2
 
 
+async def test_states_usage_paged(client):
+    r = await client.get(
+        "/api/states", params={"page": "2", "page_size": "2", "sort": "entity_id", "dir": "asc"}
+    )
+    data = await r.json()
+    assert data["page"] == 2
+    assert data["total_rows"] == 3
+    assert data["total_pages"] == 2
+    assert len(data["rows"]) == 1
+    assert data["rows"][0]["entity_id"] == "sensor.b"
+
+    r = await client.get(
+        "/api/states", params={"page": "1", "page_size": "2", "sort": "entity_id", "dir": "desc"}
+    )
+    data = await r.json()
+    assert [row["entity_id"] for row in data["rows"]] == ["sensor.b", "sensor.a"]
+
+
 async def test_states_usage_with_since(client, seed_db):
     r = await client.get("/api/states", params={"since": "4"})
     data = await r.json()
-    by_id = {d["entity_id"]: d for d in data}
+    assert "new_count" in data["columns"]
+    by_id = _rows(data)
     assert by_id["sensor.a"]["new_count"] == 0
     assert by_id["sensor.b"]["new_count"] == 0
     assert by_id["light.c"]["new_count"] == 0
@@ -31,7 +59,7 @@ async def test_states_usage_with_since(client, seed_db):
 
     r = await client.get("/api/states", params={"since": "4"})
     data = await r.json()
-    by_id = {d["entity_id"]: d for d in data}
+    by_id = _rows(data)
     # interleaved inserts must count only the two new rows for their owners
     assert by_id["sensor.a"]["new_count"] == 1
     assert by_id["sensor.b"]["new_count"] == 1
@@ -42,7 +70,8 @@ async def test_statistics_usage(client):
     r = await client.get("/api/statistics")
     assert r.status == 200
     data = await r.json()
-    by_id = {d["statistic_id"]: d for d in data}
+    assert data["total_rows"] == 2
+    by_id = {d["statistic_id"]: d for d in data["rows"]}
     assert by_id["sensor.a_mean"]["stat_count"] == 2
     assert by_id["sensor.a_mean"]["max_stat_id"] == 2
 
@@ -50,7 +79,7 @@ async def test_statistics_usage(client):
 async def test_statistics_since_new_count(client, seed_db):
     r = await client.get("/api/statistics", params={"since": "1"})
     data = await r.json()
-    by_id = {d["statistic_id"]: d for d in data}
+    by_id = {d["statistic_id"]: d for d in data["rows"]}
     assert by_id["sensor.a_mean"]["new_count"] == 1
 
     conn = sqlite3.connect(seed_db)
@@ -63,14 +92,14 @@ async def test_statistics_since_new_count(client, seed_db):
 
     r = await client.get("/api/statistics", params={"since": "1"})
     data = await r.json()
-    assert {d["statistic_id"]: d["new_count"] for d in data}["sensor.a_mean"] == 2
+    assert {d["statistic_id"]: d["new_count"] for d in data["rows"]}["sensor.a_mean"] == 2
 
 
 async def test_statistics_short_term_usage(client):
     r = await client.get("/api/statistics-short-term")
     assert r.status == 200
     data = await r.json()
-    by_id = {d["statistic_id"]: d for d in data}
+    by_id = {d["statistic_id"]: d for d in data["rows"]}
     assert by_id["sensor.a_mean"]["stat_count"] == 1
     assert by_id["sensor.a_mean"]["max_stat_id"] == 1
     assert by_id["sensor.b_mean"]["stat_count"] == 0
@@ -79,7 +108,7 @@ async def test_statistics_short_term_usage(client):
 async def test_statistics_short_term_since_new_count(client, seed_db):
     r = await client.get("/api/statistics-short-term", params={"since": "0"})
     data = await r.json()
-    by_id = {d["statistic_id"]: d for d in data}
+    by_id = {d["statistic_id"]: d for d in data["rows"]}
     assert by_id["sensor.a_mean"]["new_count"] == 1
 
     conn = sqlite3.connect(seed_db)
@@ -92,14 +121,15 @@ async def test_statistics_short_term_since_new_count(client, seed_db):
 
     r = await client.get("/api/statistics-short-term", params={"since": "0"})
     data = await r.json()
-    assert {d["statistic_id"]: d["new_count"] for d in data}["sensor.a_mean"] == 2
+    assert {d["statistic_id"]: d["new_count"] for d in data["rows"]}["sensor.a_mean"] == 2
 
 
 async def test_event_types_usage(client):
     r = await client.get("/api/event-types")
     assert r.status == 200
     data = await r.json()
-    by_type = {d["event_type"]: d for d in data}
+    assert data["total_rows"] == 2
+    by_type = {d["event_type"]: d for d in data["rows"]}
     assert by_type["state_changed"]["event_count"] == 2
     assert by_type["state_changed"]["max_event_id"] == 2
 
@@ -107,7 +137,7 @@ async def test_event_types_usage(client):
 async def test_event_types_since_new_count(client, seed_db):
     r = await client.get("/api/event-types", params={"since": "2"})
     data = await r.json()
-    assert {d["event_type"]: d["new_count"] for d in data}["state_changed"] == 0
+    assert {d["event_type"]: d["new_count"] for d in data["rows"]}["state_changed"] == 0
 
     conn = sqlite3.connect(seed_db)
     conn.execute(
@@ -119,4 +149,4 @@ async def test_event_types_since_new_count(client, seed_db):
 
     r = await client.get("/api/event-types", params={"since": "2"})
     data = await r.json()
-    assert {d["event_type"]: d["new_count"] for d in data}["state_changed"] == 1
+    assert {d["event_type"]: d["new_count"] for d in data["rows"]}["state_changed"] == 1

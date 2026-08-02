@@ -89,34 +89,26 @@ async def api_tables(request):
 
 async def api_states(request):
     log.info("Listing entities with state counts")
+    page = parse_int(request.query.get("page"), 1)
+    page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort", "entity_id")
+    sort_dir = request.query.get("dir", "asc")
     since = parse_int(request.query.get("since"), -1)
     conn = get_db()
-    rows = db.execute(
-        conn,
-        """
-        SELECT sm.metadata_id, sm.entity_id, COUNT(s.state_id) AS state_count,
-               MAX(s.state_id) AS max_state_id
-        FROM states_meta sm
-        LEFT JOIN states s ON s.metadata_id = sm.metadata_id
-        GROUP BY sm.metadata_id, sm.entity_id
-        ORDER BY sm.entity_id
-        """,
-    ).fetchall()
-    data = [dict(r) for r in rows]
-    if since >= 0:
-        new_counts = {
-            r["metadata_id"]: r["new_count"]
-            for r in db.execute(
-                conn,
-                "SELECT metadata_id, COUNT(*) AS new_count "
-                "FROM states WHERE state_id > ? GROUP BY metadata_id",
-                (since,),
-            ).fetchall()
-        }
-        for r in data:
-            r["new_count"] = new_counts.get(r["metadata_id"], 0)
+    columns, rows, total_pages, total_rows, baseline = usage_paged(
+        conn, USAGE_SPECS["states"], page, page_size, sort, sort_dir, since
+    )
     conn.close()
-    log.info("Found %d entities", len(data))
+    log.info("Found %d entities, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
+    data = {
+        "columns": columns,
+        "rows": rows,
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "global_baseline": baseline,
+    }
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
@@ -152,6 +144,120 @@ def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, def
     )
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
     return res.columns, res.fetchall(), total_pages, total_rows
+
+
+USAGE_SPECS = {
+    "states": {
+        "query": (
+            "SELECT sm.metadata_id, sm.entity_id, COUNT(s.state_id) AS state_count, "
+            "MAX(s.state_id) AS max_state_id "
+            "FROM states_meta sm "
+            "LEFT JOIN states s ON s.metadata_id = sm.metadata_id "
+            "GROUP BY sm.metadata_id, sm.entity_id"
+        ),
+        "count_table": "states",
+        "count_pk": "state_id",
+        "group_col": "metadata_id",
+        "sorts": ["metadata_id", "entity_id", "state_count", "max_state_id"],
+        "default_sort": "entity_id",
+    },
+    "statistics": {
+        "query": (
+            "SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count, "
+            "MAX(s.id) AS max_stat_id "
+            "FROM statistics_meta sm "
+            "LEFT JOIN statistics s ON s.metadata_id = sm.id "
+            "GROUP BY sm.id, sm.statistic_id"
+        ),
+        "count_table": "statistics",
+        "count_pk": "id",
+        "group_col": "metadata_id",
+        "sorts": ["metadata_id", "statistic_id", "stat_count", "max_stat_id"],
+        "default_sort": "statistic_id",
+    },
+    "statistics_short_term": {
+        "query": (
+            "SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count, "
+            "MAX(s.id) AS max_stat_id "
+            "FROM statistics_meta sm "
+            "LEFT JOIN statistics_short_term s ON s.metadata_id = sm.id "
+            "GROUP BY sm.id, sm.statistic_id"
+        ),
+        "count_table": "statistics_short_term",
+        "count_pk": "id",
+        "group_col": "metadata_id",
+        "sorts": ["metadata_id", "statistic_id", "stat_count", "max_stat_id"],
+        "default_sort": "statistic_id",
+    },
+    "event_types": {
+        "query": (
+            "SELECT et.event_type_id, et.event_type, COUNT(e.event_id) AS event_count, "
+            "MAX(e.event_id) AS max_event_id "
+            "FROM event_types et "
+            "LEFT JOIN events e ON e.event_type_id = et.event_type_id "
+            "GROUP BY et.event_type_id, et.event_type"
+        ),
+        "count_table": "events",
+        "count_pk": "event_id",
+        "group_col": "event_type_id",
+        "sorts": ["event_type_id", "event_type", "event_count", "max_event_id"],
+        "default_sort": "event_type",
+    },
+}
+
+
+def usage_paged(conn, spec, page, page_size, sort, sort_dir, since):
+    """Run a paged usage aggregate query against a USAGE_SPECS entry.
+
+    Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
+    the global max of the count-table primary key (used by the frontend as the
+    `since` anchor for the `new` column). When `since >= 0` every returned row
+    carries a `new_count` value and the `new_count` column is appended.
+    """
+    if sort not in spec["sorts"]:
+        sort = spec["default_sort"]
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+    base = spec["query"]
+    total_rows = db.execute(
+        conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t"
+    ).fetchone()["c"]
+    offset = (page - 1) * page_size
+    res = db.execute(
+        conn,
+        f"SELECT * FROM ({base}) AS t "
+        f"ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?",
+        [page_size, offset],
+    )
+    columns = list(res.columns)
+    rows = res.fetchall()
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    if since >= 0 and rows:
+        group_col = spec["group_col"]
+        ids = [r[group_col] for r in rows]
+        placeholders = ",".join("?" * len(ids))
+        new_counts = {
+            r[group_col]: r["new_count"]
+            for r in db.execute(
+                conn,
+                f"SELECT {group_col}, COUNT(*) AS new_count "
+                f"FROM {db.quote(spec['count_table'])} "
+                f"WHERE {db.quote(spec['count_pk'])} > ? "
+                f"AND {group_col} IN ({placeholders}) "
+                f"GROUP BY {group_col}",
+                [since] + ids,
+            ).fetchall()
+        }
+        columns.append("new_count")
+        for r in rows:
+            r["new_count"] = new_counts.get(r[group_col], 0)
+    row = db.execute(
+        conn,
+        f"SELECT MAX({db.quote(spec['count_pk'])}) AS m "
+        f"FROM {db.quote(spec['count_table'])}",
+    ).fetchone()
+    baseline = row["m"] if row and row["m"] is not None else 0
+    return columns, rows, total_pages, total_rows, baseline
 
 
 async def api_table(request):
@@ -245,34 +351,26 @@ async def api_entity_states(request):
 
 async def api_statistics(request):
     log.info("Listing statistics entities with counts")
+    page = parse_int(request.query.get("page"), 1)
+    page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort", "statistic_id")
+    sort_dir = request.query.get("dir", "asc")
     since = parse_int(request.query.get("since"), -1)
     conn = get_db()
-    rows = db.execute(
-        conn,
-        """
-        SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count,
-               MAX(s.id) AS max_stat_id
-        FROM statistics_meta sm
-        LEFT JOIN statistics s ON s.metadata_id = sm.id
-        GROUP BY sm.id, sm.statistic_id
-        ORDER BY sm.statistic_id
-        """,
-    ).fetchall()
-    data = [dict(r) for r in rows]
-    if since >= 0:
-        new_counts = {
-            r["metadata_id"]: r["new_count"]
-            for r in db.execute(
-                conn,
-                "SELECT metadata_id, COUNT(*) AS new_count "
-                "FROM statistics WHERE id > ? GROUP BY metadata_id",
-                (since,),
-            ).fetchall()
-        }
-        for r in data:
-            r["new_count"] = new_counts.get(r["metadata_id"], 0)
+    columns, rows, total_pages, total_rows, baseline = usage_paged(
+        conn, USAGE_SPECS["statistics"], page, page_size, sort, sort_dir, since
+    )
     conn.close()
-    log.info("Found %d statistics", len(data))
+    log.info("Found %d statistics, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
+    data = {
+        "columns": columns,
+        "rows": rows,
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "global_baseline": baseline,
+    }
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
@@ -281,34 +379,26 @@ async def api_statistics(request):
 
 async def api_statistics_short_term(request):
     log.info("Listing short-term statistics entities with counts")
+    page = parse_int(request.query.get("page"), 1)
+    page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort", "statistic_id")
+    sort_dir = request.query.get("dir", "asc")
     since = parse_int(request.query.get("since"), -1)
     conn = get_db()
-    rows = db.execute(
-        conn,
-        """
-        SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count,
-               MAX(s.id) AS max_stat_id
-        FROM statistics_meta sm
-        LEFT JOIN statistics_short_term s ON s.metadata_id = sm.id
-        GROUP BY sm.id, sm.statistic_id
-        ORDER BY sm.statistic_id
-        """,
-    ).fetchall()
-    data = [dict(r) for r in rows]
-    if since >= 0:
-        new_counts = {
-            r["metadata_id"]: r["new_count"]
-            for r in db.execute(
-                conn,
-                "SELECT metadata_id, COUNT(*) AS new_count "
-                "FROM statistics_short_term WHERE id > ? GROUP BY metadata_id",
-                (since,),
-            ).fetchall()
-        }
-        for r in data:
-            r["new_count"] = new_counts.get(r["metadata_id"], 0)
+    columns, rows, total_pages, total_rows, baseline = usage_paged(
+        conn, USAGE_SPECS["statistics_short_term"], page, page_size, sort, sort_dir, since
+    )
     conn.close()
-    log.info("Found %d short-term statistics", len(data))
+    log.info("Found %d short-term statistics, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
+    data = {
+        "columns": columns,
+        "rows": rows,
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "global_baseline": baseline,
+    }
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
@@ -365,34 +455,26 @@ async def api_statistic_data(request):
 
 async def api_event_types(request):
     log.info("Listing event types with counts")
+    page = parse_int(request.query.get("page"), 1)
+    page_size = parse_int(request.query.get("page_size"), 100)
+    sort = request.query.get("sort", "event_type")
+    sort_dir = request.query.get("dir", "asc")
     since = parse_int(request.query.get("since"), -1)
     conn = get_db()
-    rows = db.execute(
-        conn,
-        """
-        SELECT et.event_type_id, et.event_type, COUNT(e.event_id) AS event_count,
-               MAX(e.event_id) AS max_event_id
-        FROM event_types et
-        LEFT JOIN events e ON e.event_type_id = et.event_type_id
-        GROUP BY et.event_type_id, et.event_type
-        ORDER BY et.event_type
-        """,
-    ).fetchall()
-    data = [dict(r) for r in rows]
-    if since >= 0:
-        new_counts = {
-            r["event_type_id"]: r["new_count"]
-            for r in db.execute(
-                conn,
-                "SELECT event_type_id, COUNT(*) AS new_count "
-                "FROM events WHERE event_id > ? GROUP BY event_type_id",
-                (since,),
-            ).fetchall()
-        }
-        for r in data:
-            r["new_count"] = new_counts.get(r["event_type_id"], 0)
+    columns, rows, total_pages, total_rows, baseline = usage_paged(
+        conn, USAGE_SPECS["event_types"], page, page_size, sort, sort_dir, since
+    )
     conn.close()
-    log.info("Found %d event types", len(data))
+    log.info("Found %d event types, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
+    data = {
+        "columns": columns,
+        "rows": rows,
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "global_baseline": baseline,
+    }
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
@@ -422,24 +504,10 @@ async def api_event_type_data(request):
 
     event_type_id = meta["event_type_id"]
 
-    events_cols = db.table_columns(conn, "events")
-    if sort not in events_cols:
-        sort = "time_fired_ts"
-    if sort_dir not in ("asc", "desc"):
-        sort_dir = "desc"
-
-    total_rows = db.execute(
-        conn, "SELECT COUNT(*) AS c FROM events WHERE event_type_id = ?", (event_type_id,)
-    ).fetchone()["c"]
-    offset = (page - 1) * page_size
-    res = db.execute(
-        conn,
-        f'SELECT * FROM events WHERE event_type_id = ? '
-        f'ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?',
-        (event_type_id, page_size, offset),
+    columns, rows, total_pages, total_rows = query_paged(
+        conn, "events", " WHERE event_type_id = ?", [event_type_id],
+        page, page_size, sort, sort_dir, "time_fired_ts",
     )
-    columns = res.columns
-    rows = res.fetchall()
     conn.close()
 
     total_pages = max(1, (total_rows + page_size - 1) // page_size)

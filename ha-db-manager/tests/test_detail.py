@@ -49,7 +49,7 @@ async def test_statistics_short_term_listing(client):
     r = await client.get("/api/statistics-short-term")
     assert r.status == 200
     data = await r.json()
-    by_id = {row["statistic_id"]: row for row in data}
+    by_id = {row["statistic_id"]: row for row in data["rows"]}
     assert by_id["sensor.a_mean"]["stat_count"] == 1
     assert by_id["sensor.b_mean"]["stat_count"] == 0
 
