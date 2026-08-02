@@ -87,3 +87,13 @@ def test_frontend_sort_reloads_in_place():
     reload_body = appjs.split("async function reloadTable(")[1].split("async function showLinked(")[0]
     assert "showLoading()" not in reload_body
 
+
+def test_frontend_filtered_table_title_shows_filter_value():
+    appjs = APPJS.read_text()
+    # linked cells pass the displayed value through to the title
+    assert "showLinked('${link.target}', '${link.filter_col}'" in appjs
+    assert "filterLabel" in appjs
+    # the title is composed as "<table> of `<value>`" when filtered
+    assert "`${meta.label || name} of \\`${filterLabel}\\``" in appjs
+    assert "showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter, bt.filterLabel)" in appjs
+

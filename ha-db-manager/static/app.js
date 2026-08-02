@@ -199,19 +199,19 @@
                     return {
                         key,
                         label: key === 'new_count' ? 'new' : key,
-                        click: (v, row) => `showLinked('${link.target}', '${link.filter_col}', '${String(row[link.value_col] ?? '').replace(/'/g, '&#39;')}')`
+                        click: (v, row) => `showLinked('${link.target}', '${link.filter_col}', '${String(row[link.value_col] ?? '').replace(/'/g, '&#39;')}', '${String(v ?? '').replace(/'/g, '&#39;')}')`
                     };
                 }
                 return { key, label: key === 'new_count' ? 'new' : key };
             });
         }
 
-        async function showTable(name, page, sortKey, sortDir, filter) {
+        async function showTable(name, page, sortKey, sortDir, filter, filterLabel) {
             const gen = beginView();
             stopSettingsRefresh();
             const bt = backTo;
             setBack(bt
-                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter)
+                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter, bt.filterLabel)
                 : showHome);
 
             const f = normalizeFilter(filter);
@@ -228,9 +228,14 @@
             const counts = !!meta.counts;
             const sk = sortKey || (counts ? (meta.default_sort || null) : null);
             const sd = sortDir || (counts ? 'asc' : null);
-            tableState = { name, page, sortKey: sk, sortDir: sd, filter: tableFilter };
+            tableState = { name, page, sortKey: sk, sortDir: sd, filter: tableFilter, filterLabel };
 
-            document.getElementById('title').textContent = meta.label || name;
+            const titleEl = document.getElementById('title');
+            if (tableFilter && filterLabel) {
+                titleEl.textContent = `${meta.label || name} of \`${filterLabel}\``;
+            } else {
+                titleEl.textContent = meta.label || name;
+            }
             showLoading();
             const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(name, counts, page, sk, sd)}`);
             const data = await fetchFn();
@@ -265,7 +270,7 @@
             const counts = !!meta.counts;
             const sk = sortKey || (counts ? (meta.default_sort || null) : null);
             const sd = sortDir || (counts ? 'asc' : null);
-            tableState = { name, page, sortKey: sk, sortDir: sd, filter: f || tableFilter };
+            tableState = { name, page, sortKey: sk, sortDir: sd, filter: f || tableFilter, filterLabel: tableState.filterLabel };
 
             showTitleProgress(true);
             try {
@@ -290,10 +295,10 @@
             }
         }
 
-        function showLinked(target, filterCol, filterValue) {
-            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter } : null;
+        function showLinked(target, filterCol, filterValue, filterLabel) {
+            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter, filterLabel: tableState.filterLabel } : null;
             tableBaseline = 0;
-            showTable(target, 1, '', '', { col: filterCol, value: filterValue });
+            showTable(target, 1, '', '', { col: filterCol, value: filterValue }, filterLabel || filterValue);
         }
 
         function paginationHtml(data, pageCall) {
