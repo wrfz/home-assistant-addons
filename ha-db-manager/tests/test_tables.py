@@ -2,6 +2,18 @@ def _names(tables):
     return {t["name"] for t in tables}
 
 
+async def test_meta_tables_first_in_usage_order(client):
+    r = await client.get("/api/tables")
+    tables = await r.json()
+    names = [t["name"] for t in tables]
+    # count/meta views are listed first, in USAGE_SPECS order (States, Statistics, Events)
+    expected = ["states_meta", "statistics_meta", "event_types"]
+    assert names[:3] == expected
+    # the remaining non-meta tables follow afterwards
+    rest = names[3:]
+    assert "states" in rest and "events" in rest and "statistics" in rest
+
+
 async def test_list_tables(client):
     r = await client.get("/api/tables")
     assert r.status == 200

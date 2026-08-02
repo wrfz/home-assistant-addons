@@ -83,6 +83,8 @@ async def api_tables(request):
     conn = get_db()
     tables = db.list_tables(conn)
     conn.close()
+    usage_names = list(USAGE_SPECS.keys())
+    tables = usage_names + [name for name in tables if name not in usage_names]
     data = [
         {
             "name": name,
