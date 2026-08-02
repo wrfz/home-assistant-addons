@@ -109,22 +109,22 @@
         }
 
         async function showHome() {
-            beginView();
+            const gen = beginView();
             setBack(null);
             setViewSpec(null);
+            tableState = null;
             lastTable = null;
             stopSettingsRefresh();
             document.getElementById('title').textContent = 'Home Assistant DB Manager';
+            showLoading();
 
-            let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
-            html += `<button class="nav-button" onclick="showUsageView('States', statesConfig)">States</button>`;
-            html += `<button class="nav-button" onclick="showUsageView('Statistics', statisticsConfig)">Statistics</button>`;
-            html += `<button class="nav-button" onclick="showUsageView('Statistics Short Term', statisticsShortTermConfig)">Statistics Short Term</button>`;
-            html += `<button class="nav-button" onclick="showUsageView('Events', eventsConfig)">Events</button>`;
-            html += '</div></div>';
+            const tables = await loadTablesMeta();
+            if (!isCurrentView(gen)) return;
 
-            html += '<div class="menu-section"><h2>Tables</h2><div class="button-grid">';
-            html += `<button class="nav-button" onclick="showTables()">All Tables</button>`;
+            let html = '<div class="menu-section"><h2>Tables</h2><div class="button-grid">';
+            for (const t of tables) {
+                html += `<button class="nav-button" onclick="showTable('${t.name}', 1, '', '', null)">${t.name}${t.counts ? ' (counts)' : ''}</button>`;
+            }
             html += '</div></div>';
 
             html += '<div class="menu-section"><h2>Settings</h2><div class="button-grid">';
@@ -134,129 +134,114 @@
             document.getElementById('content').innerHTML = html;
         }
 
-        let usageConfig = null;
+        let tablesMeta = null;
+        let tableState = null;
+        let tableBaseline = 0;
+        let tableFilter = null;
+        let backTo = null;
 
-        const statesConfig = {
-            listEndpoint: '/api/states',
-            watchTable: 'states',
-            label: 'entities',
-            sortKey: 'entity_id',
-            idKey: 'entity_id',
-            childMaxKey: 'max_state_id',
-            columns: [
-                { key: 'entity_id', label: 'entity_id', click: v => `showEntityStates('${v}', 1)` },
-                { key: 'metadata_id', label: 'metadata_id' },
-                { key: 'state_count', label: 'state_count' },
-                { key: '__new__', label: 'new' }
-            ]
-        };
-
-        const statisticsConfig = {
-            listEndpoint: '/api/statistics',
-            watchTable: 'statistics',
-            label: 'statistics',
-            sortKey: 'statistic_id',
-            idKey: 'statistic_id',
-            childMaxKey: 'max_stat_id',
-            columns: [
-                { key: 'statistic_id', label: 'statistic_id', click: v => `showStatisticData('${v}', 1)` },
-                { key: 'metadata_id', label: 'metadata_id' },
-                { key: 'stat_count', label: 'stat_count' },
-                { key: '__new__', label: 'new' }
-            ]
-        };
-
-        const statisticsShortTermConfig = {
-            listEndpoint: '/api/statistics-short-term',
-            watchTable: 'statistics_short_term',
-            label: 'short-term statistics',
-            sortKey: 'statistic_id',
-            idKey: 'statistic_id',
-            childMaxKey: 'max_stat_id',
-            columns: [
-                { key: 'statistic_id', label: 'statistic_id', click: v => `showStatisticData('${v}', 1, '', '', true)` },
-                { key: 'metadata_id', label: 'metadata_id' },
-                { key: 'stat_count', label: 'stat_count' },
-                { key: '__new__', label: 'new' }
-            ]
-        };
-
-        const eventsConfig = {
-            listEndpoint: '/api/event-types',
-            watchTable: 'events',
-            label: 'event types',
-            sortKey: 'event_type',
-            idKey: 'event_type',
-            childMaxKey: 'max_event_id',
-            columns: [
-                { key: 'event_type', label: 'event_type', click: v => `showEventTypeData('${v}', 1)` },
-                { key: 'event_type_id', label: 'event_type_id' },
-                { key: 'event_count', label: 'event_count' },
-                { key: '__new__', label: 'new' }
-            ]
-        };
-
-        let usageGlobalBaseline = 0;
-
-        function usageColumns(config, data) {
-            const cols = [];
-            for (const c of config.columns) {
-                if (c.key === '__new__') {
-                    if (data.columns.includes('new_count')) cols.push({ key: 'new_count', label: c.label });
-                } else if (data.columns.includes(c.key)) {
-                    cols.push(c);
-                }
-            }
-            return cols;
+        async function loadTablesMeta() {
+            if (tablesMeta) return tablesMeta;
+            tablesMeta = await api('/api/tables');
+            return tablesMeta;
         }
 
-        function usageQuery(page, sortKey, sortDir) {
-            const qs = new URLSearchParams({ page, page_size: 100, sort: sortKey, dir: sortDir });
-            if (usageGlobalBaseline > 0) qs.set('since', usageGlobalBaseline);
+        function tableMeta(name) {
+            return (tablesMeta || []).find(t => t.name === name) || {};
+        }
+
+        function tableQuery(name, counts, page, sortKey, sortDir) {
+            const qs = new URLSearchParams({ page, page_size: 100 });
+            if (counts) qs.set('counts', '1');
+            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
+            if (counts && tableBaseline > 0) qs.set('since', tableBaseline);
+            if (tableFilter) {
+                qs.set('filter_col', tableFilter.col);
+                qs.set('filter_value', tableFilter.value);
+            }
             return qs;
         }
 
-        async function showUsageView(title, config, page, sortKey, sortDir) {
-            const gen = beginView();
-            setBack(showHome);
-            lastTable = null;
-            stopSettingsRefresh();
-            document.getElementById('title').textContent = title;
-            showLoading();
-            usageConfig = config;
-            const pageNo = page || 1;
-            const sk = sortKey || config.sortKey;
-            const sd = sortDir || 'asc';
-            const fetchFn = () => api(config.listEndpoint + '?' + usageQuery(pageNo, sk, sd));
-            const data = await fetchFn();
-            if (!isCurrentView(gen)) return;
-            if (data.global_baseline) usageGlobalBaseline = data.global_baseline;
-            debug(`usage open '${title}': ${data.total_rows} ${config.label} | page ${pageNo}/${data.total_pages} | globalBaseline=${usageGlobalBaseline}`);
-            renderTablePage(
-                data,
-                p => `showUsageView('${title}', usageConfig, ${p}, '${sk}', '${sd}')`,
-                { key: sk, dir: sd },
-                (k, d) => `showUsageView('${title}', usageConfig, 1, '${k}', '${d}')`,
-                fetchFn,
-                d => usageColumns(config, d)
-            );
-            setViewSpec({ kind: 'usage', table: config.watchTable, page: pageNo, page_size: 100, sort: sk, dir: sd });
+        function normalizeFilter(filter) {
+            if (filter && typeof filter === 'object') return filter;
+            if (typeof filter === 'string' && filter.includes('=')) {
+                const i = filter.indexOf('=');
+                return { col: filter.slice(0, i), value: filter.slice(i + 1) };
+            }
+            return null;
         }
 
-        async function showTables() {
+        function filterQueryString() {
+            return tableFilter ? `'${tableFilter.col}=${tableFilter.value}'` : 'null';
+        }
+
+        function tableColumns(meta, data) {
+            const links = meta.links || {};
+            return data.columns.map(key => {
+                const link = links[key];
+                if (link) {
+                    return {
+                        key,
+                        label: key === 'new_count' ? 'new' : key,
+                        click: (v, row) => `showLinked('${link.target}', '${link.filter_col}', '${String(row[link.value_col] ?? '').replace(/'/g, '&#39;')}')`
+                    };
+                }
+                return { key, label: key === 'new_count' ? 'new' : key };
+            });
+        }
+
+        async function showTable(name, page, sortKey, sortDir, filter) {
             const gen = beginView();
-            setBack(showHome);
-            setViewSpec(null);
-            lastTable = null;
             stopSettingsRefresh();
-            document.getElementById('title').textContent = 'All Tables';
+            const bt = backTo;
+            setBack(bt
+                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter)
+                : showHome);
+
+            const f = normalizeFilter(filter);
+            const fresh = page === 1 && !sortKey && !sortDir && f === null;
+            if (fresh) {
+                tableBaseline = 0;
+                tableFilter = null;
+            } else if (f) {
+                tableFilter = f;
+            }
+            backTo = null;
+
+            const meta = tableMeta(name);
+            const counts = !!meta.counts;
+            const sk = sortKey || (counts ? (meta.default_sort || null) : null);
+            const sd = sortDir || (counts ? 'asc' : null);
+            tableState = { name, page, sortKey: sk, sortDir: sd, filter: tableFilter };
+
+            document.getElementById('title').textContent = name;
             showLoading();
-            const tables = await api('/api/tables');
+            const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(name, counts, page, sk, sd)}`);
+            const data = await fetchFn();
             if (!isCurrentView(gen)) return;
-            const html = '<div class="table-list">' +
-                tables.map(t => `<div class="table-card" onclick="showTable('${t}', 1)"><h3>${t}</h3></div>`).join('') +
-                '</div>';
-            document.getElementById('content').innerHTML = html;
+            if (data.global_baseline) tableBaseline = data.global_baseline;
+
+            const spec = { kind: 'table', table: name, counts, page, page_size: 100, sort: sk, dir: sd };
+            if (tableFilter) {
+                spec.filter_col = tableFilter.col;
+                spec.filter_value = tableFilter.value;
+            }
+            setViewSpec(spec);
+
+            renderTablePage(
+                data,
+                p => `showTable('${name}', ${p}, '${sk || ''}', '${sd || ''}', ${filterQueryString()})`,
+                sk && sd ? { key: sk, dir: sd } : null,
+                (k, d) => `showTable('${name}', 1, '${k}', '${d}', ${filterQueryString()})`,
+                fetchFn,
+                d => tableColumns(meta, d)
+            );
+        }
+
+        function showLinked(target, filterCol, filterValue) {
+            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter } : null;
+            tableBaseline = 0;
+            showTable(target, 1, '', '', { col: filterCol, value: filterValue });
         }
 
         function paginationHtml(data, pageCall) {
@@ -274,7 +259,7 @@
                     const raw = row[key] !== null ? row[key] : '';
                     const display = key.endsWith('_ts') ? formatTs(raw) : raw;
                     if (typeof c === 'object' && c.click && raw != null && raw !== '') {
-                        cells += `<td><a onclick="${c.click(raw)}">${display}</a></td>`;
+                        cells += `<td><a onclick="${c.click(raw, row)}">${display}</a></td>`;
                     } else {
                         cells += `<td title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
                     }
@@ -508,90 +493,6 @@
             } catch (e) {
                 return val;
             }
-        }
-
-        function tableQuery(page, sortKey, sortDir) {
-            const qs = new URLSearchParams({ page, page_size: 100 });
-            if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
-            return qs;
-        }
-
-        async function showTable(name, page, sortKey, sortDir) {
-            const gen = beginView();
-            setBack(showTables);
-            stopSettingsRefresh();
-            setViewSpec({ kind: 'table', table: name, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
-            document.getElementById('title').textContent = name;
-            showLoading();
-            const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(page, sortKey, sortDir)}`);
-            const data = await fetchFn();
-            if (!isCurrentView(gen)) return;
-            renderTablePage(
-                data,
-                p => `showTable('${name}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
-                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
-                (k, d) => `showTable('${name}', 1, '${k}', '${d}')`,
-                fetchFn
-            );
-        }
-
-        async function showEntityStates(entity_id, page, sortKey, sortDir) {
-            const gen = beginView();
-            setBack(() => showUsageView('States', statesConfig));
-            stopSettingsRefresh();
-            setViewSpec({ kind: 'entity', table: 'states', id: entity_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
-            document.getElementById('title').textContent = entity_id;
-            showLoading();
-            const fetchFn = () => api(`/api/entity/${encodeURIComponent(entity_id)}/states?${tableQuery(page, sortKey, sortDir)}`);
-            const data = await fetchFn();
-            if (!isCurrentView(gen)) return;
-            renderTablePage(
-                data,
-                p => `showEntityStates('${entity_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
-                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
-                (k, d) => `showEntityStates('${entity_id}', 1, '${k}', '${d}')`,
-                fetchFn
-            );
-        }
-
-        async function showStatisticData(statistic_id, page, sortKey, sortDir, shortTerm) {
-            const table = shortTerm ? 'statistics_short_term' : 'statistics';
-            const config = shortTerm ? statisticsShortTermConfig : statisticsConfig;
-            const gen = beginView();
-            setBack(() => showUsageView(shortTerm ? 'Statistics Short Term' : 'Statistics', config));
-            stopSettingsRefresh();
-            setViewSpec({ kind: 'statistic', table, id: statistic_id, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
-            document.getElementById('title').textContent = statistic_id;
-            showLoading();
-            const fetchFn = () => api(`/api/statistic/${encodeURIComponent(statistic_id)}/data?${tableQuery(page, sortKey, sortDir)}${shortTerm ? '&short_term=1' : ''}`);
-            const data = await fetchFn();
-            if (!isCurrentView(gen)) return;
-            renderTablePage(
-                data,
-                p => `showStatisticData('${statistic_id}', ${p}, '${sortKey || ''}', '${sortDir || ''}', ${shortTerm ? 'true' : 'false'})`,
-                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
-                (k, d) => `showStatisticData('${statistic_id}', 1, '${k}', '${d}', ${shortTerm ? 'true' : 'false'})`,
-                fetchFn
-            );
-        }
-
-        async function showEventTypeData(event_type, page, sortKey, sortDir) {
-            const gen = beginView();
-            setBack(() => showUsageView('Events', eventsConfig));
-            stopSettingsRefresh();
-            setViewSpec({ kind: 'event', table: 'events', id: event_type, page, page_size: 100, sort: sortKey || null, dir: sortDir || null });
-            document.getElementById('title').textContent = event_type;
-            showLoading();
-            const fetchFn = () => api(`/api/event-type/${encodeURIComponent(event_type)}/data?${tableQuery(page, sortKey, sortDir)}`);
-            const data = await fetchFn();
-            if (!isCurrentView(gen)) return;
-            renderTablePage(
-                data,
-                p => `showEventTypeData('${event_type}', ${p}, '${sortKey || ''}', '${sortDir || ''}')`,
-                sortKey && sortDir ? { key: sortKey, dir: sortDir } : null,
-                (k, d) => `showEventTypeData('${event_type}', 1, '${k}', '${d}')`,
-                fetchFn
-            );
         }
 
         showHome();

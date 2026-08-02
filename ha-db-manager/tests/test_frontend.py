@@ -30,10 +30,8 @@ def test_frontend_has_version_placeholder():
 
 def test_frontend_has_short_term_usage():
     appjs = APPJS.read_text()
-    assert "Statistics Short Term" in appjs
-    assert "statisticsShortTermConfig" in appjs
-    assert "/api/statistics-short-term" in appjs
-    assert "statistics_short_term" in appjs
+    assert "/api/table/" in appjs
+    assert "counts" in appjs
 
 
 def test_frontend_async_views_guard_against_stale_renders():
@@ -42,8 +40,22 @@ def test_frontend_async_views_guard_against_stale_renders():
     assert "function isCurrentView(gen)" in appjs
     # every async view that fetches then renders must bump the generation
     # and bail out if a newer view started while awaiting.
-    for view in ("showHome", "showUsageView", "showTables", "showTable",
-                 "showEntityStates", "showStatisticData", "showEventTypeData"):
+    for view in ("showHome", "showTable"):
         assert f"async function {view}(" in appjs
         assert "beginView()" in appjs
     assert appjs.count("isCurrentView(gen)") >= 5
+
+
+def test_frontend_no_removed_usage_special_cases():
+    appjs = APPJS.read_text()
+    for legacy in ("showUsageView", "showEntityStates", "showStatisticData",
+                   "showEventTypeData", "statesConfig", "statisticsConfig",
+                   "eventsConfig", "/api/statistics-short-term", "/api/event-types"):
+        assert legacy not in appjs
+
+
+def test_frontend_has_generic_table_links():
+    appjs = APPJS.read_text()
+    assert "function showLinked(" in appjs
+    assert "tableFilter" in appjs
+    assert "counts" in appjs

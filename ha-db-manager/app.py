@@ -83,36 +83,17 @@ async def api_tables(request):
     conn = get_db()
     tables = db.list_tables(conn)
     conn.close()
-    log.info("Found %d tables", len(tables))
-    return web.json_response(tables)
-
-
-async def api_states(request):
-    log.info("Listing entities with state counts")
-    page = parse_int(request.query.get("page"), 1)
-    page_size = parse_int(request.query.get("page_size"), 100)
-    sort = request.query.get("sort", "entity_id")
-    sort_dir = request.query.get("dir", "asc")
-    since = parse_int(request.query.get("since"), -1)
-    conn = get_db()
-    columns, rows, total_pages, total_rows, baseline = usage_paged(
-        conn, USAGE_SPECS["states"], page, page_size, sort, sort_dir, since
-    )
-    conn.close()
-    log.info("Found %d entities, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
-    data = {
-        "columns": columns,
-        "rows": rows,
-        "page": page,
-        "page_size": page_size,
-        "total_rows": total_rows,
-        "total_pages": total_pages,
-        "global_baseline": baseline,
-    }
-    return web.Response(
-        text=json.dumps(data, cls=SafeEncoder),
-        content_type="application/json",
-    )
+    data = [
+        {
+            "name": name,
+            "counts": name in USAGE_SPECS,
+            "default_sort": USAGE_SPECS[name].get("default_sort") if name in USAGE_SPECS else None,
+            "links": _view_links(name),
+        }
+        for name in tables
+    ]
+    log.info("Found %d tables", len(data))
+    return web.json_response(data)
 
 
 def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, default_sort):
@@ -146,74 +127,133 @@ def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, def
     return res.columns, res.fetchall(), total_pages, total_rows
 
 
+RELATIONS = [
+    {"parent": "states_meta", "parent_col": "metadata_id", "child": "states", "child_col": "metadata_id"},
+    {"parent": "state_attributes", "parent_col": "attributes_id", "child": "states", "child_col": "attributes_id"},
+    {"parent": "statistics_meta", "parent_col": "id", "child": "statistics", "child_col": "metadata_id"},
+    {"parent": "statistics_meta", "parent_col": "id", "child": "statistics_short_term", "child_col": "metadata_id"},
+    {"parent": "event_types", "parent_col": "event_type_id", "child": "events", "child_col": "event_type_id"},
+    {"parent": "event_data", "parent_col": "data_id", "child": "events", "child_col": "data_id"},
+]
+
+
 USAGE_SPECS = {
-    "states": {
-        "query": (
-            "SELECT sm.metadata_id, sm.entity_id, COUNT(s.state_id) AS state_count, "
-            "MAX(s.state_id) AS max_state_id "
-            "FROM states_meta sm "
-            "LEFT JOIN states s ON s.metadata_id = sm.metadata_id "
-            "GROUP BY sm.metadata_id, sm.entity_id"
-        ),
-        "count_table": "states",
-        "count_pk": "state_id",
-        "group_col": "metadata_id",
+    "states_meta": {
+        "base": "SELECT sm.metadata_id, sm.entity_id FROM states_meta sm",
+        "counts": [
+            {"table": "states", "pk": "state_id", "group": "metadata_id",
+             "count": "state_count", "max": "max_state_id"},
+        ],
         "sorts": ["metadata_id", "entity_id", "state_count", "max_state_id"],
         "default_sort": "entity_id",
+        "filter_cols": ["metadata_id", "entity_id"],
+        "links": {
+            "entity_id": {"target": "states", "filter_col": "metadata_id", "value_col": "metadata_id"},
+            "metadata_id": {"target": "states", "filter_col": "metadata_id", "value_col": "metadata_id"},
+        },
     },
-    "statistics": {
-        "query": (
-            "SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count, "
-            "MAX(s.id) AS max_stat_id "
-            "FROM statistics_meta sm "
-            "LEFT JOIN statistics s ON s.metadata_id = sm.id "
-            "GROUP BY sm.id, sm.statistic_id"
-        ),
-        "count_table": "statistics",
-        "count_pk": "id",
-        "group_col": "metadata_id",
-        "sorts": ["metadata_id", "statistic_id", "stat_count", "max_stat_id"],
+    "statistics_meta": {
+        "base": "SELECT sm.id AS metadata_id, sm.statistic_id FROM statistics_meta sm",
+        "counts": [
+            {"table": "statistics", "pk": "id", "group": "metadata_id",
+             "count": "stat_count", "max": "max_stat_id"},
+            {"table": "statistics_short_term", "pk": "id", "group": "metadata_id",
+             "count": "short_stat_count", "max": "short_max_stat_id"},
+        ],
+        "sorts": ["metadata_id", "statistic_id", "stat_count", "max_stat_id",
+                  "short_stat_count", "short_max_stat_id"],
         "default_sort": "statistic_id",
-    },
-    "statistics_short_term": {
-        "query": (
-            "SELECT sm.id AS metadata_id, sm.statistic_id, COUNT(s.id) AS stat_count, "
-            "MAX(s.id) AS max_stat_id "
-            "FROM statistics_meta sm "
-            "LEFT JOIN statistics_short_term s ON s.metadata_id = sm.id "
-            "GROUP BY sm.id, sm.statistic_id"
-        ),
-        "count_table": "statistics_short_term",
-        "count_pk": "id",
-        "group_col": "metadata_id",
-        "sorts": ["metadata_id", "statistic_id", "stat_count", "max_stat_id"],
-        "default_sort": "statistic_id",
+        "filter_cols": ["metadata_id", "statistic_id"],
+        "links": {
+            "statistic_id": {"target": "statistics", "filter_col": "metadata_id", "value_col": "metadata_id"},
+            "metadata_id": {"target": "statistics", "filter_col": "metadata_id", "value_col": "metadata_id"},
+            "short_stat_count": {"target": "statistics_short_term", "filter_col": "metadata_id", "value_col": "metadata_id"},
+        },
     },
     "event_types": {
-        "query": (
-            "SELECT et.event_type_id, et.event_type, COUNT(e.event_id) AS event_count, "
-            "MAX(e.event_id) AS max_event_id "
-            "FROM event_types et "
-            "LEFT JOIN events e ON e.event_type_id = et.event_type_id "
-            "GROUP BY et.event_type_id, et.event_type"
-        ),
-        "count_table": "events",
-        "count_pk": "event_id",
-        "group_col": "event_type_id",
+        "base": "SELECT et.event_type_id, et.event_type FROM event_types et",
+        "counts": [
+            {"table": "events", "pk": "event_id", "group": "event_type_id",
+             "count": "event_count", "max": "max_event_id"},
+        ],
         "sorts": ["event_type_id", "event_type", "event_count", "max_event_id"],
         "default_sort": "event_type",
+        "filter_cols": ["event_type_id", "event_type"],
+        "links": {
+            "event_type": {"target": "events", "filter_col": "event_type_id", "value_col": "event_type_id"},
+            "event_type_id": {"target": "events", "filter_col": "event_type_id", "value_col": "event_type_id"},
+        },
     },
 }
 
 
-def usage_paged(conn, spec, page, page_size, sort, sort_dir, since):
-    """Run a paged usage aggregate query against a USAGE_SPECS entry.
+def _view_links(table):
+    """Map a view's columns to navigation targets (parent/child tables)."""
+    links = {}
+    if table in USAGE_SPECS:
+        links.update(USAGE_SPECS[table].get("links", {}))
+    for rel in RELATIONS:
+        if rel["parent"] == table:
+            links.setdefault(rel["parent_col"], {
+                "target": rel["child"], "filter_col": rel["child_col"], "value_col": rel["parent_col"],
+            })
+        if rel["child"] == table:
+            links.setdefault(rel["child_col"], {
+                "target": rel["parent"], "filter_col": rel["parent_col"], "value_col": rel["child_col"],
+            })
+    return links
+
+
+def _count_view_base(spec, since, filter_col=None, filter_value=None):
+    """Build the base SELECT of a count view (meta table + aggregated counts).
+
+    Returns (sql, params). Each count table is pre-aggregated and joined to avoid
+    cross products. When `since >= 0` an additional `new_count` join (on the
+    first count table) is added. When `filter_col`/`filter_value` are given the
+    meta rows are restricted to matching values (used when navigating from a
+    child table's foreign key back to its meta row).
+    """
+    selects = ["t.*"]
+    joins = [f"FROM ({spec['base']}) t"]
+    params = []
+    where = ""
+    if filter_col and filter_value is not None:
+        where = f" WHERE t.{db.quote(filter_col)} = ?"
+    for i, c in enumerate(spec["counts"]):
+        alias = f"c{i}"
+        selects.append(f"COALESCE({alias}.{c['count']}, 0) AS {c['count']}")
+        selects.append(f"COALESCE({alias}.{c['max']}, 0) AS {c['max']}")
+        joins.append(
+            f"LEFT JOIN (SELECT {c['group']}, COUNT(*) AS {c['count']}, "
+            f"MAX({db.quote(c['pk'])}) AS {c['max']} "
+            f"FROM {db.quote(c['table'])} GROUP BY {c['group']}) {alias} "
+            f"ON {alias}.{c['group']} = t.{c['group']}"
+        )
+    if since >= 0:
+        c = spec["counts"][0]
+        selects.append("COALESCE(nc.new_count, 0) AS new_count")
+        joins.append(
+            f"LEFT JOIN (SELECT {c['group']} AS g, COUNT(*) AS new_count "
+            f"FROM {db.quote(c['table'])} "
+            f"WHERE {db.quote(c['pk'])} > ? GROUP BY {c['group']}) nc "
+            f"ON nc.g = t.{c['group']}"
+        )
+        params.append(since)
+    if where:
+        params.append(filter_value)
+    return f"SELECT {', '.join(selects)} " + " ".join(joins) + where, params
+
+
+def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
+                     filter_col=None, filter_value=None):
+    """Run a paged count view for a meta table (see USAGE_SPECS).
 
     Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
-    the global max of the count-table primary key (used by the frontend as the
-    `since` anchor for the `new` column). When `since >= 0` every row carries a
-    global `new_count` value (also sortable) and the `new_count` column is
-    appended.
+    the global max of the first count table's primary key (the frontend `since`
+    anchor for the `new` column). When `since >= 0` every row carries a global
+    `new_count` value (also sortable) and the `new_count` column is appended.
+    When `filter_col`/`filter_value` are given the meta rows are restricted to
+    matching values.
     """
     sorts = list(spec["sorts"])
     if since >= 0:
@@ -222,19 +262,7 @@ def usage_paged(conn, spec, page, page_size, sort, sort_dir, since):
         sort = spec["default_sort"]
     if sort_dir not in ("asc", "desc"):
         sort_dir = "desc"
-    base = spec["query"]
-    base_params = []
-    if since >= 0:
-        base = (
-            f"SELECT t.*, COALESCE(nc.new_count, 0) AS new_count "
-            f"FROM ({base}) t "
-            f"LEFT JOIN (SELECT {spec['group_col']} AS g, COUNT(*) AS new_count "
-            f"FROM {db.quote(spec['count_table'])} "
-            f"WHERE {db.quote(spec['count_pk'])} > ? "
-            f"GROUP BY {spec['group_col']}) nc "
-            f"ON nc.g = t.{spec['group_col']}"
-        )
-        base_params = [since]
+    base, base_params = _count_view_base(spec, since, filter_col, filter_value)
     total_rows = db.execute(
         conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t", base_params
     ).fetchone()["c"]
@@ -248,10 +276,10 @@ def usage_paged(conn, spec, page, page_size, sort, sort_dir, since):
     columns = list(res.columns)
     rows = res.fetchall()
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    first = spec["counts"][0]
     row = db.execute(
         conn,
-        f"SELECT MAX({db.quote(spec['count_pk'])}) AS m "
-        f"FROM {db.quote(spec['count_table'])}",
+        f"SELECT MAX({db.quote(first['pk'])}) AS m FROM {db.quote(first['table'])}",
     ).fetchone()
     baseline = row["m"] if row and row["m"] is not None else 0
     return columns, rows, total_pages, total_rows, baseline
@@ -261,257 +289,87 @@ async def api_table(request):
     table_name = request.match_info["table_name"]
     page = parse_int(request.query.get("page"), 1)
     page_size = parse_int(request.query.get("page_size"), 100)
+    counts = request.query.get("counts") == "1"
+    filter_col = request.query.get("filter_col")
+    filter_value = request.query.get("filter_value")
     sort = request.query.get("sort")
-    sort_dir = request.query.get("dir", "asc")
+    sort_dir = request.query.get("dir")
+    if sort_dir is None:
+        sort_dir = "desc" if filter_col and filter_value is not None else "asc"
+    since = parse_int(request.query.get("since"), -1)
 
     log.info(
-        "Viewing table '%s' (page %d, page_size %d, sort=%s %s)",
-        table_name, page, page_size, sort, sort_dir,
+        "Viewing table '%s' (page %d, page_size %d, sort=%s %s, counts=%s, "
+        "filter_col=%s, filter_value=%s)",
+        table_name, page, page_size, sort, sort_dir, counts, filter_col, filter_value,
     )
+
+    if table_name not in db.list_tables(get_db()):
+        log.warning("Table '%s' not found", table_name)
+        return web.json_response({"error": "Table not found"}, status=404)
+
+    if counts:
+        spec = USAGE_SPECS.get(table_name)
+        if spec is None:
+            return web.json_response({"error": "No count view for this table"}, status=404)
+        if filter_col and filter_col not in spec["filter_cols"]:
+            return web.json_response({"error": "Invalid filter column"}, status=400)
+        conn = get_db()
+        try:
+            columns, rows, total_pages, total_rows, baseline = count_view_paged(
+                conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
+                filter_col, filter_value,
+            )
+        finally:
+            conn.close()
+        data = {
+            "table_name": table_name,
+            "counts": True,
+            "columns": columns,
+            "rows": rows,
+            "page": page,
+            "page_size": page_size,
+            "total_rows": total_rows,
+            "total_pages": total_pages,
+            "global_baseline": baseline,
+        }
+        log.info("Count view '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
+        return web.Response(
+            text=json.dumps(data, cls=SafeEncoder),
+            content_type="application/json",
+        )
 
     conn = get_db()
     try:
-        columns, rows, total_pages, total_rows = query_paged(
-            conn, table_name, "", [], page, page_size, sort, sort_dir, None
-        )
+        table_cols = db.table_columns(conn, table_name)
+    except Exception:
+        conn.close()
+        return web.json_response({"error": "Table not found"}, status=404)
+    try:
+        if filter_col and filter_value is not None:
+            if filter_col not in table_cols:
+                return web.json_response({"error": "Invalid filter column"}, status=400)
+            columns, rows, total_pages, total_rows = query_paged(
+                conn, table_name,
+                f" WHERE {db.quote(filter_col)} = ?", [filter_value],
+                page, page_size, sort, sort_dir, DETAIL_DEFAULT_SORTS.get(table_name),
+            )
+        else:
+            columns, rows, total_pages, total_rows = query_paged(
+                conn, table_name, "", [], page, page_size, sort, sort_dir, None
+            )
     except KeyError:
         conn.close()
         log.warning("Table '%s' not found", table_name)
         return web.json_response({"error": "Table not found"}, status=404)
-    conn.close()
+    finally:
+        conn.close()
 
     log.info("Table '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
 
     data = {
         "table_name": table_name,
-        "columns": columns,
-        "rows": rows,
-        "page": page,
-        "page_size": page_size,
-        "total_rows": total_rows,
-        "total_pages": total_pages,
-    }
-    return web.Response(
-        text=json.dumps(data, cls=SafeEncoder),
-        content_type="application/json",
-    )
-
-
-async def api_entity_states(request):
-    entity_id = request.match_info["entity_id"]
-    page = parse_int(request.query.get("page"), 1)
-    page_size = parse_int(request.query.get("page_size"), 100)
-    sort = request.query.get("sort", "last_updated_ts")
-    sort_dir = request.query.get("dir", "desc")
-
-    log.info(
-        "GET /api/entity/%s/states (page=%d, page_size=%d, sort=%s %s)",
-        entity_id, page, page_size, sort, sort_dir,
-    )
-
-    conn = get_db()
-
-    meta = db.execute(
-        conn, "SELECT metadata_id FROM states_meta WHERE entity_id = ?", (entity_id,)
-    ).fetchone()
-    if not meta:
-        conn.close()
-        log.warning("Entity '%s' not found in states_meta", entity_id)
-        return web.json_response({"error": "Entity not found"}, status=404)
-
-    metadata_id = meta["metadata_id"]
-    log.info("Entity '%s' -> metadata_id=%d", entity_id, metadata_id)
-
-    columns, rows, total_pages, total_rows = query_paged(
-        conn, "states", " WHERE metadata_id = ?", [metadata_id],
-        page, page_size, sort, sort_dir, "last_updated_ts",
-    )
-    conn.close()
-
-    log.info("Entity '%s': %d states in total", entity_id, total_rows)
-    log.info("Entity '%s': returning %d rows (page %d/%d)", entity_id, len(rows), page, total_pages)
-
-    data = {
-        "entity_id": entity_id,
-        "columns": columns,
-        "rows": rows,
-        "page": page,
-        "page_size": page_size,
-        "total_rows": total_rows,
-        "total_pages": total_pages,
-    }
-    return web.Response(
-        text=json.dumps(data, cls=SafeEncoder),
-        content_type="application/json",
-    )
-
-
-async def api_statistics(request):
-    log.info("Listing statistics entities with counts")
-    page = parse_int(request.query.get("page"), 1)
-    page_size = parse_int(request.query.get("page_size"), 100)
-    sort = request.query.get("sort", "statistic_id")
-    sort_dir = request.query.get("dir", "asc")
-    since = parse_int(request.query.get("since"), -1)
-    conn = get_db()
-    columns, rows, total_pages, total_rows, baseline = usage_paged(
-        conn, USAGE_SPECS["statistics"], page, page_size, sort, sort_dir, since
-    )
-    conn.close()
-    log.info("Found %d statistics, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
-    data = {
-        "columns": columns,
-        "rows": rows,
-        "page": page,
-        "page_size": page_size,
-        "total_rows": total_rows,
-        "total_pages": total_pages,
-        "global_baseline": baseline,
-    }
-    return web.Response(
-        text=json.dumps(data, cls=SafeEncoder),
-        content_type="application/json",
-    )
-
-
-async def api_statistics_short_term(request):
-    log.info("Listing short-term statistics entities with counts")
-    page = parse_int(request.query.get("page"), 1)
-    page_size = parse_int(request.query.get("page_size"), 100)
-    sort = request.query.get("sort", "statistic_id")
-    sort_dir = request.query.get("dir", "asc")
-    since = parse_int(request.query.get("since"), -1)
-    conn = get_db()
-    columns, rows, total_pages, total_rows, baseline = usage_paged(
-        conn, USAGE_SPECS["statistics_short_term"], page, page_size, sort, sort_dir, since
-    )
-    conn.close()
-    log.info("Found %d short-term statistics, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
-    data = {
-        "columns": columns,
-        "rows": rows,
-        "page": page,
-        "page_size": page_size,
-        "total_rows": total_rows,
-        "total_pages": total_pages,
-        "global_baseline": baseline,
-    }
-    return web.Response(
-        text=json.dumps(data, cls=SafeEncoder),
-        content_type="application/json",
-    )
-
-
-async def api_statistic_data(request):
-    statistic_id = request.match_info["statistic_id"]
-    page = parse_int(request.query.get("page"), 1)
-    page_size = parse_int(request.query.get("page_size"), 100)
-    sort = request.query.get("sort", "start_ts")
-    sort_dir = request.query.get("dir", "desc")
-    short_term = request.query.get("short_term") == "1"
-    table = "statistics_short_term" if short_term else "statistics"
-
-    log.info(
-        "Viewing data for statistic '%s' (page %d, page_size %d, sort=%s %s, short_term=%s)",
-        statistic_id, page, page_size, sort, sort_dir, short_term,
-    )
-
-    conn = get_db()
-    meta = db.execute(
-        conn, "SELECT id FROM statistics_meta WHERE statistic_id = ?", (statistic_id,)
-    ).fetchone()
-    if not meta:
-        conn.close()
-        log.warning("Statistic '%s' not found in statistics_meta", statistic_id)
-        return web.json_response({"error": "Statistic not found"}, status=404)
-
-    metadata_id = meta["id"]
-
-    columns, rows, total_pages, total_rows = query_paged(
-        conn, table, " WHERE metadata_id = ?", [metadata_id],
-        page, page_size, sort, sort_dir, "start_ts",
-    )
-    conn.close()
-
-    log.info("Statistic '%s': returning %d rows (page %d/%d)", statistic_id, len(rows), page, total_pages)
-
-    data = {
-        "statistic_id": statistic_id,
-        "columns": columns,
-        "rows": rows,
-        "page": page,
-        "page_size": page_size,
-        "total_rows": total_rows,
-        "total_pages": total_pages,
-    }
-    return web.Response(
-        text=json.dumps(data, cls=SafeEncoder),
-        content_type="application/json",
-    )
-
-
-async def api_event_types(request):
-    log.info("Listing event types with counts")
-    page = parse_int(request.query.get("page"), 1)
-    page_size = parse_int(request.query.get("page_size"), 100)
-    sort = request.query.get("sort", "event_type")
-    sort_dir = request.query.get("dir", "asc")
-    since = parse_int(request.query.get("since"), -1)
-    conn = get_db()
-    columns, rows, total_pages, total_rows, baseline = usage_paged(
-        conn, USAGE_SPECS["event_types"], page, page_size, sort, sort_dir, since
-    )
-    conn.close()
-    log.info("Found %d event types, returning %d rows (page %d/%d)", total_rows, len(rows), page, total_pages)
-    data = {
-        "columns": columns,
-        "rows": rows,
-        "page": page,
-        "page_size": page_size,
-        "total_rows": total_rows,
-        "total_pages": total_pages,
-        "global_baseline": baseline,
-    }
-    return web.Response(
-        text=json.dumps(data, cls=SafeEncoder),
-        content_type="application/json",
-    )
-
-
-async def api_event_type_data(request):
-    event_type = request.match_info["event_type"]
-    page = parse_int(request.query.get("page"), 1)
-    page_size = parse_int(request.query.get("page_size"), 100)
-    sort = request.query.get("sort", "time_fired_ts")
-    sort_dir = request.query.get("dir", "desc")
-
-    log.info(
-        "Viewing events for type '%s' (page %d, page_size %d, sort=%s %s)",
-        event_type, page, page_size, sort, sort_dir,
-    )
-
-    conn = get_db()
-    meta = db.execute(
-        conn, "SELECT event_type_id FROM event_types WHERE event_type = ?", (event_type,)
-    ).fetchone()
-    if not meta:
-        conn.close()
-        log.warning("Event type '%s' not found in event_types", event_type)
-        return web.json_response({"error": "Event type not found"}, status=404)
-
-    event_type_id = meta["event_type_id"]
-
-    columns, rows, total_pages, total_rows = query_paged(
-        conn, "events", " WHERE event_type_id = ?", [event_type_id],
-        page, page_size, sort, sort_dir, "time_fired_ts",
-    )
-    conn.close()
-
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    log.info("Event type '%s': returning %d rows (page %d/%d)", event_type, len(rows), page, total_pages)
-
-    data = {
-        "event_type": event_type,
+        "counts": False,
         "columns": columns,
         "rows": rows,
         "page": page,
@@ -527,76 +385,64 @@ async def api_event_type_data(request):
 
 STATS_TABLES = {"statistics", "statistics_short_term"}
 
+DETAIL_DEFAULT_SORTS = {
+    "states": "last_updated_ts",
+    "statistics": "start_ts",
+    "statistics_short_term": "start_ts",
+    "events": "time_fired_ts",
+}
+
 
 def max_id(conn, spec):
-    kind = spec.get("kind")
-    if kind == "usage":
-        pk = {"states": "state_id", "statistics": "id", "statistics_short_term": "id", "events": "event_id"}.get(spec.get("table"))
-        if pk:
+    table = spec.get("table")
+    if spec.get("counts") and table in USAGE_SPECS:
+        first = USAGE_SPECS[table]["counts"][0]
+        filter_col = spec.get("filter_col")
+        filter_value = spec.get("filter_value")
+        if filter_col and filter_value is not None:
             row = db.execute(
                 conn,
-                f'SELECT MAX({db.quote(pk)}) AS m FROM {db.quote(spec.get("table"))}',
+                f'SELECT MAX({db.quote(first["pk"])}) AS m FROM {db.quote(first["table"])} '
+                f'WHERE {db.quote(filter_col)} = ?',
+                (filter_value,),
             ).fetchone()
             return row["m"] if row and row["m"] is not None else 0
-    elif kind == "entity":
         row = db.execute(
             conn,
-            "SELECT MAX(state_id) AS m FROM states WHERE metadata_id = "
-            "(SELECT metadata_id FROM states_meta WHERE entity_id = ?)",
-            (spec.get("id"),),
+            f'SELECT MAX({db.quote(first["pk"])}) AS m FROM {db.quote(first["table"])}',
         ).fetchone()
-    elif kind == "statistic":
-        stat_table = spec.get("table") or "statistics"
-        row = db.execute(
-            conn,
-            f'SELECT MAX(id) AS m FROM {db.quote(stat_table)} WHERE metadata_id = '
-            f'(SELECT id FROM statistics_meta WHERE statistic_id = ?)',
-            (spec.get("id"),),
-        ).fetchone()
-    elif kind == "event":
-        row = db.execute(
-            conn,
-            "SELECT MAX(event_id) AS m FROM events WHERE event_type_id = "
-            "(SELECT event_type_id FROM event_types WHERE event_type = ?)",
-            (spec.get("id"),),
-        ).fetchone()
-    else:
-        return db.max_row_id(conn, spec.get("table"))
-    return row["m"] if row and row["m"] is not None else 0
+        return row["m"] if row and row["m"] is not None else 0
+    return db.max_row_id(conn, table)
 
 
 def page_signature(conn, spec):
-    kind = spec.get("kind")
     table = spec.get("table")
-    if kind == "entity":
-        where, params = (
-            " WHERE metadata_id = (SELECT metadata_id FROM states_meta WHERE entity_id = ?)",
-            [spec.get("id")],
-        )
-    elif kind == "statistic":
-        where, params = (
-            " WHERE metadata_id = (SELECT id FROM statistics_meta WHERE statistic_id = ?)",
-            [spec.get("id")],
-        )
-    elif kind == "event":
-        where, params = (
-            " WHERE event_type_id = (SELECT event_type_id FROM event_types WHERE event_type = ?)",
-            [spec.get("id")],
-        )
-    elif kind == "table":
-        where, params = "", []
-    else:
-        return None
-
+    page = parse_int(spec.get("page"), 1)
+    page_size = parse_int(spec.get("page_size"), 100)
     sort = spec.get("sort")
     sort_dir = spec.get("dir") or "asc"
+    if spec.get("counts") and table in USAGE_SPECS:
+        columns, rows, total_pages, total_rows, baseline = count_view_paged(
+            conn, USAGE_SPECS[table], page, page_size,
+            sort or USAGE_SPECS[table]["default_sort"], sort_dir,
+            parse_int(spec.get("since"), -1),
+            spec.get("filter_col"), spec.get("filter_value"),
+        )
+        payload = json.dumps([total_rows] + [dict(r) for r in rows], cls=SafeEncoder, sort_keys=True)
+        return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+    filter_col = spec.get("filter_col")
+    filter_value = spec.get("filter_value")
+    where = ""
+    params = []
+    if filter_col and filter_value is not None:
+        where = f" WHERE {db.quote(filter_col)} = ?"
+        params = [filter_value]
     table_cols = db.table_columns(conn, table)
     order_clause = ""
     if sort in table_cols and sort_dir in ("asc", "desc"):
         order_clause = f' ORDER BY {db.quote(sort)} {sort_dir.upper()}'
 
-    page = parse_int(spec.get("page"), 1)
-    page_size = parse_int(spec.get("page_size"), 100)
     total = db.execute(
         conn, f'SELECT COUNT(*) AS c FROM {db.quote(table)}{where}', params
     ).fetchone()["c"]
@@ -611,7 +457,7 @@ def page_signature(conn, spec):
 
 
 def check_view_changed(conn, spec, state):
-    is_stats = spec.get("kind") == "statistic" or spec.get("table") in STATS_TABLES
+    is_stats = spec.get("counts") or spec.get("table") in STATS_TABLES
     mid = max_id(conn, spec)
     sig = page_signature(conn, spec) if is_stats else None
     if mid is None:
@@ -771,14 +617,7 @@ def create_app():
     app.router.add_get("/api/settings", api_get_settings)
     app.router.add_post("/api/settings", api_set_settings)
     app.router.add_get("/api/tables", api_tables)
-    app.router.add_get("/api/states", api_states)
     app.router.add_get("/api/table/{table_name}", api_table)
-    app.router.add_get("/api/entity/{entity_id}/states", api_entity_states)
-    app.router.add_get("/api/statistics", api_statistics)
-    app.router.add_get("/api/statistics-short-term", api_statistics_short_term)
-    app.router.add_get("/api/statistic/{statistic_id}/data", api_statistic_data)
-    app.router.add_get("/api/event-types", api_event_types)
-    app.router.add_get("/api/event-type/{event_type}/data", api_event_type_data)
     if not os.environ.get("HA_DISABLE_WATCH_LOOP"):
         app.on_startup.append(start_watch_loop)
     return app

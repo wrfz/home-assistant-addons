@@ -1,8 +1,7 @@
-async def test_entity_states(client):
-    r = await client.get("/api/entity/sensor.a/states")
+async def test_states_filtered_by_metadata(client):
+    r = await client.get("/api/table/states", params={"filter_col": "metadata_id", "filter_value": "1"})
     assert r.status == 200
     data = await r.json()
-    assert data["entity_id"] == "sensor.a"
     assert data["total_rows"] == 2
     assert len(data["rows"]) == 2
     # default sort last_updated_ts DESC
@@ -10,69 +9,67 @@ async def test_entity_states(client):
     assert ts == sorted(ts, reverse=True)
 
 
-async def test_entity_states_sort_asc(client):
+async def test_states_filtered_sort_asc(client):
     r = await client.get(
-        "/api/entity/sensor.a/states", params={"sort": "last_updated_ts", "dir": "asc"}
+        "/api/table/states",
+        params={"filter_col": "metadata_id", "filter_value": "1", "sort": "last_updated_ts", "dir": "asc"},
     )
     data = await r.json()
     ts = [row["last_updated_ts"] for row in data["rows"]]
     assert ts == [1000.0, 1100.0]
 
 
-async def test_entity_not_found(client):
-    r = await client.get("/api/entity/sensor.nope/states")
-    assert r.status == 404
+async def test_states_filter_not_found(client):
+    r = await client.get("/api/table/states", params={"filter_col": "metadata_id", "filter_value": "999"})
+    assert r.status == 200
+    data = await r.json()
+    assert data["total_rows"] == 0
 
 
 async def test_statistic_data(client):
-    r = await client.get("/api/statistic/sensor.a_mean/data")
+    r = await client.get("/api/table/statistics", params={"filter_col": "metadata_id", "filter_value": "1"})
     assert r.status == 200
     data = await r.json()
-    assert data["statistic_id"] == "sensor.a_mean"
     assert data["total_rows"] == 2
 
 
-async def test_statistic_not_found(client):
-    r = await client.get("/api/statistic/sensor.nope/data")
-    assert r.status == 404
-
-
 async def test_statistic_short_term_data(client):
-    r = await client.get("/api/statistic/sensor.a_mean/data", params={"short_term": "1"})
+    r = await client.get("/api/table/statistics_short_term", params={"filter_col": "metadata_id", "filter_value": "1"})
     assert r.status == 200
     data = await r.json()
-    assert data["statistic_id"] == "sensor.a_mean"
     assert data["total_rows"] == 1
 
 
-async def test_statistics_short_term_listing(client):
-    r = await client.get("/api/statistics-short-term")
-    assert r.status == 200
-    data = await r.json()
-    by_id = {row["statistic_id"]: row for row in data["rows"]}
-    assert by_id["sensor.a_mean"]["stat_count"] == 1
-    assert by_id["sensor.b_mean"]["stat_count"] == 0
-
-
 async def test_event_type_data(client):
-    r = await client.get("/api/event-type/state_changed/data")
+    r = await client.get("/api/table/events", params={"filter_col": "event_type_id", "filter_value": "1"})
     assert r.status == 200
     data = await r.json()
-    assert data["event_type"] == "state_changed"
     assert data["total_rows"] == 2
 
 
 async def test_event_type_not_found(client):
-    r = await client.get("/api/event-type/not_an_event/data")
-    assert r.status == 404
+    r = await client.get("/api/table/events", params={"filter_col": "event_type_id", "filter_value": "999"})
+    assert r.status == 200
+    assert (await r.json())["total_rows"] == 0
 
 
 async def test_detail_sort_injection_safe(client):
     r = await client.get(
-        "/api/entity/sensor.a/states",
-        params={"sort": "state; DROP TABLE states", "dir": "desc"},
+        "/api/table/states",
+        params={"filter_col": "metadata_id", "filter_value": "1",
+                "sort": "state; DROP TABLE states", "dir": "desc"},
     )
     assert r.status == 200
+    r2 = await client.get("/api/table/states")
+    assert (await r2.json())["total_rows"] == 4
+
+
+async def test_detail_filter_injection_safe(client):
+    r = await client.get(
+        "/api/table/states",
+        params={"filter_col": "metadata_id; DROP TABLE states;--", "filter_value": "1"},
+    )
+    assert r.status in (200, 400)
     r2 = await client.get("/api/table/states")
     assert (await r2.json())["total_rows"] == 4
 

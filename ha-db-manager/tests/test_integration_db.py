@@ -160,9 +160,10 @@ async def mysql_client(monkeypatch, tmp_path):
 async def _assert_endpoints(client):
     r = await client.get("/api/tables")
     tables = await r.json()
-    assert {"states", "statistics", "events", "event_types"} <= set(tables)
+    names = {t["name"] for t in tables}
+    assert {"states", "statistics", "events", "event_types"} <= names
 
-    r = await client.get("/api/states")
+    r = await client.get("/api/table/states_meta", params={"counts": "1"})
     assert r.status == 200
     data = await r.json()
     by_id = {d["entity_id"]: d for d in data["rows"]}
@@ -175,25 +176,19 @@ async def _assert_endpoints(client):
     ts = [row["last_updated_ts"] for row in data["rows"]]
     assert ts == sorted(ts, reverse=True)
 
-    r = await client.get("/api/entity/sensor.a/states")
+    r = await client.get("/api/table/states", params={"filter_col": "metadata_id", "filter_value": "1"})
     data = await r.json()
     assert data["total_rows"] == 2
 
-    r = await client.get("/api/statistics")
+    r = await client.get("/api/table/statistics_meta", params={"counts": "1"})
     data = await r.json()
     assert {d["statistic_id"]: d["stat_count"] for d in data["rows"]}["sensor.a_mean"] == 2
 
-    r = await client.get("/api/statistics-short-term")
-    data = await r.json()
-    by_id = {d["statistic_id"]: d for d in data["rows"]}
-    assert by_id["sensor.a_mean"]["stat_count"] == 1
-    assert by_id["sensor.b_mean"]["stat_count"] == 0
-
-    r = await client.get("/api/statistic/sensor.a_mean/data", params={"short_term": "1"})
+    r = await client.get("/api/table/statistics_short_term", params={"filter_col": "metadata_id", "filter_value": "1"})
     data = await r.json()
     assert data["total_rows"] == 1
 
-    r = await client.get("/api/event-types")
+    r = await client.get("/api/table/event_types", params={"counts": "1"})
     data = await r.json()
     assert {d["event_type"]: d["event_count"] for d in data["rows"]}["state_changed"] == 2
 

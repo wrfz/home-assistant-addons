@@ -1,10 +1,24 @@
+def _names(tables):
+    return {t["name"] for t in tables}
+
+
 async def test_list_tables(client):
     r = await client.get("/api/tables")
     assert r.status == 200
     tables = await r.json()
-    assert "states" in tables
-    assert "events" in tables
-    assert "statistics" in tables
+    names = _names(tables)
+    assert "states" in names
+    assert "events" in names
+    assert "statistics" in names
+    # count views are marked and carry default sort / links metadata
+    by_name = {t["name"]: t for t in tables}
+    assert by_name["states_meta"]["counts"] is True
+    assert by_name["states_meta"]["default_sort"] == "entity_id"
+    assert "entity_id" in by_name["states_meta"]["links"]
+    assert by_name["states"]["counts"] is False
+    assert by_name["states"]["links"]["metadata_id"]["target"] == "states_meta"
+    assert by_name["statistics_meta"]["links"]["short_stat_count"]["target"] == "statistics_short_term"
+    assert by_name["events"]["links"]["event_type_id"]["target"] == "event_types"
 
 
 async def test_table_page(client):
@@ -12,6 +26,7 @@ async def test_table_page(client):
     assert r.status == 200
     data = await r.json()
     assert data["table_name"] == "states"
+    assert data["counts"] is False
     assert data["total_rows"] == 4
     assert data["total_pages"] == 2
     assert len(data["rows"]) == 2
@@ -65,3 +80,31 @@ async def test_table_injection_table_name(client):
     assert r2.status == 200
     data = await r2.json()
     assert data["total_rows"] == 4
+
+
+async def test_table_filter(client):
+    r = await client.get("/api/table/states", params={"filter_col": "metadata_id", "filter_value": "1"})
+    assert r.status == 200
+    data = await r.json()
+    assert data["total_rows"] == 2
+
+
+async def test_table_filter_invalid_column(client):
+    r = await client.get(
+        "/api/table/states", params={"filter_col": "nope; DROP TABLE states", "filter_value": "1"}
+    )
+    assert r.status == 400
+
+
+async def test_table_filter_does_not_leak(client):
+    r = await client.get("/api/table/states", params={"filter_col": "metadata_id", "filter_value": "1"})
+    d = await r.json()
+    assert all(row["metadata_id"] == 1 for row in d["rows"])
+
+
+async def test_count_view_invalid_filter_column(client):
+    r = await client.get(
+        "/api/table/states_meta",
+        params={"counts": "1", "filter_col": "state_count", "filter_value": "2"},
+    )
+    assert r.status == 400
