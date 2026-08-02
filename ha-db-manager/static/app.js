@@ -115,7 +115,7 @@
             lastTable = null;
             usageViewActive = false;
             stopSettingsRefresh();
-            document.getElementById('title').textContent = '--- Home Assistant DB Manager ---';
+            document.getElementById('title').textContent = 'Home Assistant DB Manager';
 
             let html = '<div class="menu-section"><h2>Top-Usage</h2><div class="button-grid">';
             html += `<button class="nav-button" onclick="showUsageView('States', statesConfig)">States</button>`;
