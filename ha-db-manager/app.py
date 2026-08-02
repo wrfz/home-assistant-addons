@@ -194,9 +194,9 @@ USAGE_SPECS = {
 
 def _view_links(table):
     """Map a view's columns to navigation targets (parent/child tables)."""
-    links = {}
     if table in USAGE_SPECS:
-        links.update(USAGE_SPECS[table].get("links", {}))
+        return dict(USAGE_SPECS[table].get("links", {}))
+    links = {}
     for rel in RELATIONS:
         if rel["parent"] == table:
             links.setdefault(rel["parent_col"], {

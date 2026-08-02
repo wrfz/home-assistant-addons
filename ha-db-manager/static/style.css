@@ -6,7 +6,7 @@
     --app-accent-text: #000;
     --app-card-bg: #2d2d2d;
     --app-card-bg-hover: #2a2a2a;
-    --app-virtual-bg: color-mix(in srgb, var(--app-bg) 93%, #000);
+    --app-virtual-bg: color-mix(in srgb, var(--app-bg) 97%, #000);
     --app-header-bg: #333;
     --app-border: #444;
     --app-border-strong: #555;

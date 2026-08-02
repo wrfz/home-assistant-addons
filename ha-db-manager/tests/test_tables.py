@@ -31,6 +31,7 @@ async def test_list_tables(client):
     assert by_name["states_meta"]["default_sort"] == "entity_id"
     assert by_name["states"]["label"] is None
     assert "entity_id" in by_name["states_meta"]["links"]
+    assert "metadata_id" not in by_name["states_meta"]["links"]  # not a link in the States view
     assert by_name["states"]["counts"] is False
     assert by_name["states"]["links"]["metadata_id"]["target"] == "states_meta"
     assert by_name["statistics_meta"]["links"]["short_stat_count"]["target"] == "statistics_short_term"

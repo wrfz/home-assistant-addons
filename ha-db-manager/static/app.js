@@ -394,7 +394,7 @@
             return gen === viewGen;
         }
 
-        let liveOn = false;
+        let liveOn = true;
         let ws = null;
         let currentViewSpec = null;
 
@@ -413,6 +413,12 @@
             } else {
                 if (ws) { ws.close(); ws = null; }
             }
+        }
+
+        if (liveOn) {
+            document.getElementById('live-toggle').textContent = 'Live: On';
+            document.getElementById('live-toggle').classList.add('live-on');
+            connectWs();
         }
 
         function connectWs() {
