@@ -144,6 +144,15 @@ def test_frontend_hide_columns_controls():
     # the hidden columns are listed as a tree: table, then indented columns below
     assert "hidden-table" in appjs
     assert "hidden-col" in appjs
+    # link and virtual columns cannot be hidden: no x button for them
+    assert "protectedCols" in appjs
+    assert "meta.virtual_cols" in appjs
+    # the settings buttons are disabled while a request is running
+    assert "setColumnsBusy(" in appjs
+    assert "hide-empty-btn" in appjs
+    assert "show-all-btn" in appjs
+    assert "column-progress" in appjs
+    assert ".top-btn:disabled" in css
     # the hide button and tree are styled
     assert ".col-hide" in css
     assert ".hidden-table" in css

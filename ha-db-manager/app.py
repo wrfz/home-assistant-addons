@@ -249,6 +249,23 @@ def _virtual_cols(table):
     return [c["count"] for c in spec["counts"]] + ["new_count"]
 
 
+def _protected_columns(table):
+    """Columns that can never be hidden.
+
+    Link columns carry navigation targets, link value columns are needed to
+    build the navigation value, and virtual columns are computed (counts/new)
+    that are always displayed. Hiding any of them would break navigation or
+    empty a count view, so it is not allowed.
+    """
+    cols = set()
+    for col, info in _view_links(table).items():
+        cols.add(col)
+        if info.get("value_col"):
+            cols.add(info["value_col"])
+    cols.update(_virtual_cols(table))
+    return cols
+
+
 def _count_view_columns(spec):
     """All columns a count view can produce (base + count names + new_count)."""
     count_names = [c["count"] for c in spec["counts"]]
@@ -698,11 +715,12 @@ async def api_clean_new(request):
     return web.json_response(settings_payload(app))
 
 
-def _empty_columns(conn, table):
+def _empty_columns(conn, table, skip):
     """Return the columns of `table` where every row has a NULL or empty value.
 
-    Tables without any rows are skipped (nothing to inspect, hiding all their
-    columns would leave an empty table header).
+    Columns in `skip` are not inspected (they are always displayed: links and
+    virtual columns). Tables without any rows are skipped (nothing to inspect,
+    hiding all their columns would leave an empty table header).
     """
     total = db.execute(
         conn, f"SELECT COUNT(*) AS c FROM {db.quote(table)}"
@@ -712,6 +730,8 @@ def _empty_columns(conn, table):
     columns = db.table_columns(conn, table)
     empty = []
     for col in sorted(columns):
+        if col in skip:
+            continue
         row = db.execute(
             conn,
             f"SELECT 1 AS x FROM {db.quote(table)} "
@@ -732,6 +752,9 @@ async def api_column_hide(request):
     column = body.get("column")
     if not table or not column:
         return web.json_response({"error": "table and column are required"}, status=400)
+    if column in _protected_columns(table):
+        log.info("Refusing to hide protected column %s.%s", table, column)
+        return web.json_response({"error": "This column cannot be hidden"}, status=400)
     app = request.app
     app["state"]["hidden_columns"].setdefault(table, set()).add(column)
     save_settings(app)
@@ -740,13 +763,17 @@ async def api_column_hide(request):
 
 
 async def api_columns_hide_empty(request):
-    """Hide every column whose rows are all empty (NULL or '')."""
+    """Hide every column whose rows are all empty (NULL or '').
+
+    Link and virtual columns are never hidden (they are always displayed), so
+    their values are not inspected at all.
+    """
     app = request.app
     conn = get_db()
     try:
         tables = db.list_tables(conn)
         for table in tables:
-            empty = _empty_columns(conn, table)
+            empty = _empty_columns(conn, table, _protected_columns(table))
             if empty:
                 app["state"]["hidden_columns"].setdefault(table, set()).update(empty)
     finally:

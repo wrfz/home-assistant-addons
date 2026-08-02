@@ -353,6 +353,11 @@
         function buildThead(data, sort, sortAction, cols) {
             const list = cols || data.columns;
             const tableName = data.table_name;
+            const meta = tableMeta(tableName);
+            const protectedCols = (meta.links
+                ? Object.keys(meta.links).concat(Object.values(meta.links).map(l => l.value_col))
+                : [])
+                .concat(meta.virtual_cols || []);
             let thead = '<tr>';
             list.forEach(c => {
                 const key = typeof c === 'object' ? c.key : c;
@@ -364,8 +369,9 @@
                 const onclick = sortAction && sortable
                     ? `onclick="${sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
                     : '';
-                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}` +
-                    `<span class="col-hide" title="Hide this column" onclick="event.stopPropagation(); hideColumn('${tableName}', '${key}')">&times;</span></th>`;
+                const hide = protectedCols.includes(key) ? '' :
+                    `<span class="col-hide" title="Hide this column" onclick="event.stopPropagation(); hideColumn('${tableName}', '${key}')">&times;</span>`;
+                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}>${label}${arrow}${hide}</th>`;
             });
             return thead + '</tr>';
         }
@@ -519,8 +525,9 @@
                 `<button class="top-btn" onclick="saveLiveInterval()">Save</button>` +
                 '</div>' +
                 '<div class="settings-row">' +
-                '<button class="top-btn" onclick="hideEmptyColumns()">Hide Empty Columns</button>' +
-                '<button class="top-btn" onclick="showAllColumns()">Show All Columns</button>' +
+                '<button class="top-btn" id="hide-empty-btn" onclick="hideEmptyColumns()">Hide Empty Columns</button>' +
+                '<button class="top-btn" id="show-all-btn" onclick="showAllColumns()">Show All Columns</button>' +
+                '<span id="column-progress" class="title-progress hidden"></span>' +
                 '</div>' +
                 '<div class="info" id="hidden-cols-info">Hidden columns: none</div>' +
                 '<div class="info" id="client-info">Loading...</div>' +
@@ -566,26 +573,46 @@
                 ).join('');
         }
 
+        function setColumnsBusy(busy) {
+            const hideBtn = document.getElementById('hide-empty-btn');
+            const showBtn = document.getElementById('show-all-btn');
+            const progress = document.getElementById('column-progress');
+            if (!hideBtn || !showBtn || !progress) return;
+            hideBtn.disabled = busy;
+            showBtn.disabled = busy;
+            progress.classList.toggle('hidden', !busy);
+        }
+
         async function hideEmptyColumns() {
-            const resp = await fetch(basePath + '/api/columns/hide-empty', { method: 'POST' });
-            const body = await resp.json();
-            if (body.error) {
-                alert('Error: ' + body.error);
-                return;
+            setColumnsBusy(true);
+            try {
+                const resp = await fetch(basePath + '/api/columns/hide-empty', { method: 'POST' });
+                const body = await resp.json();
+                if (body.error) {
+                    alert('Error: ' + body.error);
+                    return;
+                }
+                debug('hide empty columns -> ' + JSON.stringify(body.hidden_columns));
+                renderHiddenColumns(body.hidden_columns);
+            } finally {
+                setColumnsBusy(false);
             }
-            debug('hide empty columns -> ' + JSON.stringify(body.hidden_columns));
-            renderHiddenColumns(body.hidden_columns);
         }
 
         async function showAllColumns() {
-            const resp = await fetch(basePath + '/api/columns/show-all', { method: 'POST' });
-            const body = await resp.json();
-            if (body.error) {
-                alert('Error: ' + body.error);
-                return;
+            setColumnsBusy(true);
+            try {
+                const resp = await fetch(basePath + '/api/columns/show-all', { method: 'POST' });
+                const body = await resp.json();
+                if (body.error) {
+                    alert('Error: ' + body.error);
+                    return;
+                }
+                debug('show all columns -> ' + JSON.stringify(body.hidden_columns));
+                renderHiddenColumns(body.hidden_columns);
+            } finally {
+                setColumnsBusy(false);
             }
-            debug('show all columns -> ' + JSON.stringify(body.hidden_columns));
-            renderHiddenColumns(body.hidden_columns);
         }
 
         async function saveLiveInterval() {

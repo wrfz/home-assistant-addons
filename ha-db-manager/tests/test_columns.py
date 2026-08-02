@@ -23,14 +23,14 @@ async def test_hide_column(client):
     assert "state" in tdata["columns"]
 
 
-async def test_hide_column_filters_count_view(client):
-    r = await client.post("/api/columns/hide", json={"table": "states_meta", "column": "metadata_id"})
+async def test_hide_column_filters_plain_table(client):
+    r = await client.post("/api/columns/hide", json={"table": "states", "column": "entity_id"})
     assert r.status == 200
-    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+    r = await client.get("/api/table/states")
     assert r.status == 200
     tdata = await r.json()
-    assert "metadata_id" not in tdata["columns"]
-    assert "entity_id" in tdata["columns"]
+    assert "entity_id" not in tdata["columns"]
+    assert "state" in tdata["columns"]
 
 
 async def test_hide_column_requires_fields(client):
@@ -110,23 +110,48 @@ async def test_hidden_columns_not_selected_in_sql(client, monkeypatch):
         assert "entity_id" not in sql
 
 
-async def test_hidden_count_column_not_joined_in_sql(client, monkeypatch):
-    await client.post("/api/columns/hide", json={"table": "states_meta", "column": "new_count"})
-    statements = []
-    real_execute = db.execute
+async def test_count_view_columns_all_protected(client):
+    # every count-view column is a link, a link value column or virtual, so
+    # none of them may be hidden
+    for col in ("entity_id", "metadata_id", "state_count", "new_count"):
+        r = await client.post("/api/columns/hide", json={"table": "states_meta", "column": col})
+        assert r.status == 400, col
 
-    def capture(conn, sql, params=None):
-        statements.append(sql)
-        return real_execute(conn, sql, params)
 
-    monkeypatch.setattr(db, "execute", capture)
-    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+async def test_link_column_cannot_be_hidden(client):
+    r = await client.post("/api/columns/hide", json={"table": "states_meta", "column": "entity_id"})
+    assert r.status == 400
+    data = await r.json()
+    assert data["error"]
+    r = await client.post("/api/columns/hide", json={"table": "states", "column": "metadata_id"})
+    assert r.status == 400
+
+
+async def test_hide_empty_skips_link_columns(client, conn):
+    conn.execute("UPDATE statistics_meta SET statistic_id = NULL")
+    conn.execute("UPDATE event_types SET event_type = NULL")
+    conn.commit()
+    r = await client.post("/api/columns/hide-empty")
     assert r.status == 200
     data = await r.json()
-    assert "new_count" not in data["columns"]
-    assert "state_count" in data["columns"]
-    joins = " ".join(statements)
-    assert "new_count" not in joins
+    hidden = data["hidden_columns"]
+    # link columns are skipped even though their values are now empty
+    assert "statistic_id" not in hidden.get("statistics_meta", [])
+    assert "event_type" not in hidden.get("event_types", [])
+    # but a non-protected column with empty values is hidden
+    conn2 = conn
+    conn2.execute("UPDATE states SET state = ''")
+    conn2.commit()
+    r = await client.post("/api/columns/hide-empty")
+    data = await r.json()
+    assert "state" in data["hidden_columns"].get("states", [])
+
+
+async def test_virtual_column_cannot_be_hidden(client):
+    r = await client.post("/api/columns/hide", json={"table": "states_meta", "column": "state_count"})
+    assert r.status == 400
+    r = await client.post("/api/columns/hide", json={"table": "states_meta", "column": "new_count"})
+    assert r.status == 400
 
 
 async def test_show_all_columns_persisted_across_reboot(client, tmp_path, monkeypatch):
