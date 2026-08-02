@@ -113,3 +113,16 @@ def test_frontend_title_uses_server_filter_label():
     # links no longer carry a client-side label
     assert "filterLabel" not in appjs.split("function showLinked(")[1].split("function paginationHtml(")[0]
 
+
+def test_frontend_clean_new_button():
+    appjs = APPJS.read_text()
+    html = HTML.read_text()
+    # a Clean New button is rendered and only shown on count views
+    assert 'id="clean-new"' in html
+    assert "function cleanNew(" in appjs
+    assert "setCleanNewVisible(" in appjs
+    assert "/api/clean-new" in appjs
+    # the client no longer tracks its own new-baseline
+    assert "tableBaseline" not in appjs
+    assert "global_baseline" not in appjs
+

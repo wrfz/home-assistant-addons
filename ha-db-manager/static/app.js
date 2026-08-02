@@ -112,6 +112,17 @@
             document.getElementById('title-progress').classList.toggle('hidden', !on);
         }
 
+        function setCleanNewVisible(visible) {
+            document.getElementById('clean-new').style.display = visible ? '' : 'none';
+        }
+
+        async function cleanNew() {
+            const resp = await fetch(basePath + '/api/clean-new', { method: 'POST' });
+            const body = await resp.json();
+            debug(`clean new pressed -> baselines ${JSON.stringify(body.baselines)}`);
+            silentReload();
+        }
+
         async function showHome() {
             const gen = beginView();
             setBack(null);
@@ -119,6 +130,7 @@
             tableState = null;
             lastTable = null;
             stopSettingsRefresh();
+            setCleanNewVisible(false);
             document.getElementById('title').textContent = 'Home Assistant DB Manager';
             showLoading();
 
@@ -152,7 +164,6 @@
 
         let tablesMeta = null;
         let tableState = null;
-        let tableBaseline = 0;
         let tableFilter = null;
         let backTo = null;
 
@@ -170,7 +181,6 @@
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (counts) qs.set('counts', '1');
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
-            if (counts && tableBaseline > 0) qs.set('since', tableBaseline);
             if (tableFilter) {
                 qs.set('filter_col', tableFilter.col);
                 qs.set('filter_value', tableFilter.value);
@@ -219,11 +229,11 @@
 
             const f = normalizeFilter(filter);
             tableFilter = f;
-            if (!f) tableBaseline = 0;
             backTo = null;
 
             const meta = tableMeta(name);
             const counts = !!meta.counts;
+            setCleanNewVisible(counts);
             const sk = sortKey || (counts ? (meta.default_sort || null) : null);
             const sd = sortDir || (counts ? 'asc' : null);
             tableState = { name, page, sortKey: sk, sortDir: sd, filter: tableFilter };
@@ -234,7 +244,6 @@
             const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(name, counts, page, sk, sd)}`);
             const data = await fetchFn();
             if (!isCurrentView(gen)) return;
-            if (data.global_baseline) tableBaseline = data.global_baseline;
 
             if (tableFilter && data.filter_label) {
                 titleEl.textContent = `${meta.label || name} of \`${data.filter_label}\``;
@@ -266,6 +275,7 @@
             const f = normalizeFilter(filter);
             const meta = tableMeta(name);
             const counts = !!meta.counts;
+            setCleanNewVisible(counts);
             const sk = sortKey || (counts ? (meta.default_sort || null) : null);
             const sd = sortDir || (counts ? 'asc' : null);
             tableState = { name, page, sortKey: sk, sortDir: sd, filter: f || tableFilter };
@@ -275,7 +285,6 @@
                 const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(name, counts, page, sk, sd)}`);
                 const data = await fetchFn();
                 if (!isCurrentView(gen) || !lastTable) return;
-                if (data.global_baseline) tableBaseline = data.global_baseline;
 
                 const spec = { kind: 'table', table: name, counts, page, page_size: 100, sort: sk, dir: sd };
                 if (tableFilter) {
@@ -295,7 +304,6 @@
 
         function showLinked(target, filterCol, filterValue) {
             backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter } : null;
-            tableBaseline = 0;
             showTable(target, 1, '', '', { col: filterCol, value: filterValue });
         }
 
@@ -473,6 +481,7 @@
             setViewSpec(null);
             lastTable = null;
             stopSettingsRefresh();
+            setCleanNewVisible(false);
             document.getElementById('title').textContent = 'Settings';
             const opts = localeOptions.map(o =>
                 `<option value="${o.value}" ${o.value === tsLocale ? 'selected' : ''}>${o.label}</option>`

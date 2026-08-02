@@ -182,3 +182,72 @@ async def test_count_view_filter(client):
     assert data["total_rows"] == 1
     assert data["rows"][0]["entity_id"] == "sensor.a"
     assert data["rows"][0]["state_count"] == 2
+
+
+async def test_new_baseline_persists_server_side(client, seed_db):
+    # first request without `since` establishes a baseline = current max pk
+    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+    data = await r.json()
+    assert {row["entity_id"]: row["new_count"] for row in data["rows"]} == {
+        "sensor.a": 0, "sensor.b": 0, "light.c": 0,
+    }
+
+    # new rows inserted after the baseline count as "new" on later requests
+    conn = sqlite3.connect(seed_db)
+    conn.execute(
+        "INSERT INTO states (entity_id, metadata_id, state, last_updated_ts) VALUES (?,?,?,?)",
+        ("sensor.a", 1, "3.0", 1200.0),
+    )
+    conn.commit()
+    conn.close()
+
+    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+    data = await r.json()
+    assert {row["entity_id"]: row["new_count"] for row in data["rows"]} == {
+        "sensor.a": 1, "sensor.b": 0, "light.c": 0,
+    }
+
+    # sorting and paging reuse the same server-held baseline
+    r = await client.get(
+        "/api/table/states_meta", params={"counts": "1", "sort": "new_count", "dir": "desc"}
+    )
+    data = await r.json()
+    assert data["rows"][0]["entity_id"] == "sensor.a"
+    assert data["rows"][0]["new_count"] == 1
+
+
+async def test_clean_new_resets_baselines(client, seed_db):
+    # establish a baseline, then add a new row
+    await client.get("/api/table/states_meta", params={"counts": "1"})
+    conn = sqlite3.connect(seed_db)
+    conn.execute(
+        "INSERT INTO states (entity_id, metadata_id, state, last_updated_ts) VALUES (?,?,?,?)",
+        ("sensor.a", 1, "3.0", 1200.0),
+    )
+    conn.commit()
+    conn.close()
+
+    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+    data = await r.json()
+    assert {row["entity_id"]: row["new_count"] for row in data["rows"]}["sensor.a"] == 1
+
+    # Clean New just resets the stored baselines to 0 (no DB access needed)
+    r = await client.post("/api/clean-new")
+    assert r.status == 200
+
+    # the next count view request re-establishes the baseline, so nothing is new
+    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+    data = await r.json()
+    assert {row["entity_id"]: row["new_count"] for row in data["rows"]} == {
+        "sensor.a": 0, "sensor.b": 0, "light.c": 0,
+    }
+
+
+async def test_clean_new_covers_all_usage_tables(client):
+    # establish baselines for all usage tables first
+    for table in ("states_meta", "statistics_meta", "event_types"):
+        await client.get(f"/api/table/{table}", params={"counts": "1"})
+    r = await client.post("/api/clean-new")
+    assert r.status == 200
+    # no persistence side effects: settings file stays baseline-free
+    assert "baselines" not in (await r.json())

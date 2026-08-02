@@ -353,10 +353,19 @@ async def api_table(request):
             return web.json_response({"error": "Invalid filter column"}, status=400)
         conn = get_db()
         try:
+            establish = False
+            if since < 0:
+                since = request.app["state"]["baselines"].get(table_name, 0)
+                if since <= 0:
+                    since = -1
+                    establish = True
             columns, rows, total_pages, total_rows, baseline = count_view_paged(
                 conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
                 filter_col, filter_value,
             )
+            if establish:
+                request.app["state"]["baselines"][table_name] = baseline
+                log.info("Established new-baseline %s = %s", table_name, baseline)
             filter_label = (
                 resolve_filter_label(conn, table_name, filter_col, filter_value)
                 if filter_col and filter_value is not None else None
@@ -621,6 +630,21 @@ def save_settings(app):
         log.warning("Could not save settings to %s: %s", _settings_file(), e)
 
 
+async def api_clean_new(request):
+    """Reset all new-baselines to 0, so nothing is reported as new.
+
+    The baseline is pure in-memory backend state. The next count view request
+    (e.g. the frontend's reload right after pressing the button) re-establishes
+    it to the current max pk, so only rows added from that point on count as
+    new again. No DB access is needed here.
+    """
+    app = request.app
+    for table_name in USAGE_SPECS:
+        app["state"]["baselines"][table_name] = 0
+    log.info("Clean New: baselines reset to 0")
+    return web.json_response(settings_payload(app))
+
+
 async def api_get_settings(request):
     return web.json_response(settings_payload(request.app))
 
@@ -659,6 +683,7 @@ def create_app():
         "watch_interval": 3,
         "watch_connections": set(),
         "watches": {},
+        "baselines": {},
     }
     load_settings(app)
     app.router.add_get("/", index)
@@ -666,6 +691,7 @@ def create_app():
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/api/settings", api_get_settings)
     app.router.add_post("/api/settings", api_set_settings)
+    app.router.add_post("/api/clean-new", api_clean_new)
     app.router.add_get("/api/tables", api_tables)
     app.router.add_get("/api/table/{table_name}", api_table)
     if not os.environ.get("HA_DISABLE_WATCH_LOOP"):
