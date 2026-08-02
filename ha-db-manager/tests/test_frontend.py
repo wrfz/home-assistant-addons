@@ -158,3 +158,13 @@ def test_frontend_hide_columns_controls():
     assert ".hidden-table" in css
     assert ".hidden-col" in css
 
+
+def test_frontend_null_values_rendered_as_null():
+    appjs = APPJS.read_text()
+    css = STYLECSS.read_text()
+    # NULL values must be rendered as an explicit NULL cell instead of an empty one
+    assert '"null-cell"' in appjs
+    assert "isNull" in appjs.split("function buildRows(")[1].split("function buildThead(")[0]
+    assert "NULL" in appjs.split("function buildRows(")[1].split("function buildThead(")[0]
+    assert ".null-cell" in css
+

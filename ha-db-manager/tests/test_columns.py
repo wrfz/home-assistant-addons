@@ -63,6 +63,32 @@ async def test_hide_empty_columns(client, conn):
     assert "id" in tdata["columns"]
 
 
+async def test_hide_empty_recognises_empty_blob(client, conn):
+    # an empty BLOB (x'') must count as empty even though it compares unequal
+    # to '' in SQLite; a populated BLOB / numeric 0 / NULL handling as well
+    conn.execute(
+        "CREATE TABLE blob_test (id INTEGER, empty_blob BLOB, real_blob BLOB, "
+        "ts REAL, txt TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO blob_test (id, empty_blob, real_blob, ts, txt) VALUES (?, ?, ?, ?, ?)",
+        [
+            (1, b"", b"\x01\x02", None, ""),
+            (2, b"", b"\x03", 0.0, None),
+        ],
+    )
+    conn.commit()
+
+    r = await client.post("/api/columns/hide-empty")
+    assert r.status == 200
+    data = await r.json()
+    hidden = data["hidden_columns"]
+    assert set(hidden.get("blob_test", [])) == {"empty_blob", "txt"}
+    assert "id" not in hidden.get("blob_test", [])
+    assert "real_blob" not in hidden.get("blob_test", [])
+    assert "ts" not in hidden.get("blob_test", [])
+
+
 async def test_show_all_columns(client):
     r = await client.post("/api/columns/hide", json={"table": "states", "column": "entity_id"})
     assert r.status == 200

@@ -52,6 +52,9 @@ table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
 th, td { border: 1px solid var(--app-border); padding: 0.4rem 0.6rem; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 th { background: var(--app-header-bg); position: sticky; top: 0; }
 th.virtual, td.virtual { background: var(--app-virtual-bg); }
+td .null-cell {
+    color: var(--app-text-secondary); font-style: italic; opacity: 0.8;
+}
 th .col-hide {
     float: right; margin-left: 0.5rem; color: var(--app-text-secondary);
     cursor: pointer; font-weight: bold; user-select: none;

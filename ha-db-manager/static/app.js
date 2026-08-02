@@ -338,12 +338,16 @@
                 list.forEach(c => {
                     const key = typeof c === 'object' ? c.key : c;
                     const cls = typeof c === 'object' && c.cls ? ` class="${c.cls}"` : '';
-                    const raw = row[key] !== null ? row[key] : '';
-                    const display = key.endsWith('_ts') ? formatTs(raw) : raw;
+                    const val = row[key];
+                    const isNull = val === null || val === undefined;
+                    const raw = isNull ? '' : val;
+                    const display = isNull
+                        ? '<span class="null-cell">NULL</span>'
+                        : (key.endsWith('_ts') ? formatTs(raw) : raw);
                     if (typeof c === 'object' && c.click && raw != null && raw !== '') {
                         cells += `<td${cls}><a onclick="${c.click(raw, row)}">${display}</a></td>`;
                     } else {
-                        cells += `<td${cls} title="${String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
+                        cells += `<td${cls} title="${isNull ? '' : String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
                     }
                 });
                 return '<tr>' + cells + '</tr>';

@@ -173,6 +173,19 @@ class Backend:
             return "`" + name.replace("`", "``") + "`"
         return '"' + name.replace('"', '""') + '"'
 
+    def non_empty_condition(self, col):
+        """SQL predicate for ``col`` containing at least one non-empty value.
+
+        "Empty" means NULL, the empty string, or an empty binary value. It is
+        based on ``length()`` because ``col != ''`` in SQLite wrongly treats an
+        empty BLOB (``x''``) as non-empty (blobs always compare greater than
+        text, so ``x'' != ''`` is true).
+        """
+        quoted = self.quote(col)
+        if self.kind == "postgres":
+            return f"({quoted} IS NOT NULL AND octet_length({quoted}) > 0)"
+        return f"({quoted} IS NOT NULL AND length({quoted}) > 0)"
+
     def convert_placeholders(self, sql):
         """Translate ``?`` placeholders to the active dialect.
 
@@ -325,6 +338,10 @@ def execute(conn, sql, params=None):
 
 def quote(name):
     return get_backend().quote(name)
+
+
+def non_empty_condition(col):
+    return get_backend().non_empty_condition(col)
 
 
 def list_tables(conn):

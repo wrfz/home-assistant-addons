@@ -735,7 +735,7 @@ def _empty_columns(conn, table, skip):
         row = db.execute(
             conn,
             f"SELECT 1 AS x FROM {db.quote(table)} "
-            f"WHERE {db.quote(col)} IS NOT NULL AND {db.quote(col)} != '' LIMIT 1",
+            f"WHERE {db.non_empty_condition(col)} LIMIT 1",
         ).fetchone()
         if row is None:
             empty.append(col)
