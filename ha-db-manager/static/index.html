@@ -12,7 +12,10 @@
         <button class="top-btn" id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
     </div>
     <div id="back"><a onclick="goBack()">&larr; Back</a></div>
-    <h1 id="title">Home Assistant DB Manager</h1>
+    <div class="title-row">
+        <h1 id="title">Home Assistant DB Manager</h1>
+        <span id="title-progress" class="title-progress hidden"></span>
+    </div>
     <div id="content"></div>
     <div id="debug-panel">
         <div id="debug-title">Debug</div>

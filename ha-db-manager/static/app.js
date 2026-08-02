@@ -108,6 +108,10 @@
             document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
         }
 
+        function showTitleProgress(on) {
+            document.getElementById('title-progress').classList.toggle('hidden', !on);
+        }
+
         async function showHome() {
             const gen = beginView();
             setBack(null);
@@ -242,12 +246,48 @@
 
             renderTablePage(
                 data,
-                p => `showTable('${name}', ${p}, '${sk || ''}', '${sd || ''}', ${filterQueryString()})`,
+                p => `reloadTable('${name}', ${p}, '${sk || ''}', '${sd || ''}', ${filterQueryString()})`,
                 sk && sd ? { key: sk, dir: sd } : null,
-                (k, d) => `showTable('${name}', 1, '${k}', '${d}', ${filterQueryString()})`,
+                (k, d) => `reloadTable('${name}', 1, '${k}', '${d}', ${filterQueryString()})`,
                 fetchFn,
                 d => tableColumns(meta, d)
             );
+        }
+
+        async function reloadTable(name, page, sortKey, sortDir, filter) {
+            if (!lastTable) {
+                showTable(name, page, sortKey, sortDir, filter);
+                return;
+            }
+            const gen = beginView();
+            const f = normalizeFilter(filter);
+            const meta = tableMeta(name);
+            const counts = !!meta.counts;
+            const sk = sortKey || (counts ? (meta.default_sort || null) : null);
+            const sd = sortDir || (counts ? 'asc' : null);
+            tableState = { name, page, sortKey: sk, sortDir: sd, filter: f || tableFilter };
+
+            showTitleProgress(true);
+            try {
+                const fetchFn = () => api(`/api/table/${encodeURIComponent(name)}?${tableQuery(name, counts, page, sk, sd)}`);
+                const data = await fetchFn();
+                if (!isCurrentView(gen) || !lastTable) return;
+                if (data.global_baseline) tableBaseline = data.global_baseline;
+
+                const spec = { kind: 'table', table: name, counts, page, page_size: 100, sort: sk, dir: sd };
+                if (tableFilter) {
+                    spec.filter_col = tableFilter.col;
+                    spec.filter_value = tableFilter.value;
+                }
+                setViewSpec(spec);
+
+                lastTable.sort = sk && sd ? { key: sk, dir: sd } : null;
+                lastTable.sortAction = (k, d) => `reloadTable('${name}', 1, '${k}', '${d}', ${filterQueryString()})`;
+                lastTable.silentFetch = fetchFn;
+                updateTableInPlace(data, p => `reloadTable('${name}', ${p}, '${sk || ''}', '${sd || ''}', ${filterQueryString()})`);
+            } finally {
+                showTitleProgress(false);
+            }
         }
 
         function showLinked(target, filterCol, filterValue) {

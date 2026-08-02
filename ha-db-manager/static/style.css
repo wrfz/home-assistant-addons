@@ -12,6 +12,7 @@
 }
 body { font-family: system-ui, sans-serif; margin: 2rem; background: var(--app-bg); color: var(--app-text); }
 h1 { color: var(--app-accent); }
+.title-row { display: flex; align-items: center; }
 a { color: var(--app-accent); text-decoration: none; cursor: pointer; }
 a:hover { text-decoration: underline; }
 .menu-section { margin-bottom: 2rem; }
@@ -40,6 +41,12 @@ a:hover { text-decoration: underline; }
     animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.title-progress {
+    display: inline-block; width: 14px; height: 14px; margin-left: 0.6rem;
+    border-radius: 50%; border: 2px solid var(--app-border); border-top-color: var(--app-accent);
+    animation: spin 0.8s linear infinite; vertical-align: middle;
+}
+.title-progress.hidden { display: none; }
 table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
 th, td { border: 1px solid var(--app-border); padding: 0.4rem 0.6rem; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 th { background: var(--app-header-bg); position: sticky; top: 0; }

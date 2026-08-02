@@ -68,3 +68,22 @@ def test_frontend_meta_tables_first_with_labels():
     # count views use their friendly label, no "(counts)" suffix remains
     assert "t.label || t.name" in appjs
     assert "' (counts)'" not in appjs
+
+
+def test_frontend_sort_reloads_in_place():
+    appjs = APPJS.read_text()
+    html = HTML.read_text()
+    css = STYLECSS.read_text()
+    # sorting/pagination re-fetch without wiping the table:
+    assert "async function reloadTable(" in appjs
+    assert "function showTitleProgress(" in appjs
+    assert "updateTableInPlace(data" in appjs
+    # header sort actions must route through reloadTable, not showTable:
+    assert "reloadTable('${name}', 1, '${k}', '${d}'" in appjs
+    # a small progress indicator sits next to the page title:
+    assert 'id="title-progress"' in html
+    assert "title-progress.hidden" in css
+    # the full-content loading spinner must not be used for in-place reloads:
+    reload_body = appjs.split("async function reloadTable(")[1].split("async function showLinked(")[0]
+    assert "showLoading()" not in reload_body
+
