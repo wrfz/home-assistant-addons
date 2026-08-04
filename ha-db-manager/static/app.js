@@ -1,3 +1,6 @@
+        import { html, render, nothing } from './vendor/lit-html/lit-html.js';
+        import { repeat } from './vendor/lit-html/directives/repeat.js';
+
         const basePath = location.pathname.replace(/\/$/, '');
         let backAction = null;
 
@@ -104,8 +107,14 @@
             document.getElementById('back').style.display = action ? 'block' : 'none';
         }
 
+        function setContentHtml(html) {
+            const el = document.getElementById('content');
+            delete el._$litPart$;
+            el.innerHTML = html;
+        }
+
         function showLoading() {
-            document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
+            setContentHtml('<div class="loading"><div class="spinner"></div>Loading...</div>');
         }
 
         function showTitleProgress(on) {
@@ -214,7 +223,7 @@
             html += `<button class="nav-button" onclick="showSettings()">Settings</button>`;
             html += '</div></div>';
 
-            document.getElementById('content').innerHTML = html;
+            setContentHtml(html);
         }
 
         let tablesMeta = null;
@@ -252,13 +261,9 @@
             return null;
         }
 
-        function filterQueryString() {
-            return tableFilter ? `'${tableFilter.col}=${tableFilter.value}'` : 'null';
-        }
-
         function tableColumns(meta, data) {
             const links = meta.links || {};
-                const virtual = meta.virtual_cols || [];
+            const virtual = meta.virtual_cols || [];
             return data.columns.map(key => {
                 const link = links[key];
                 const cls = virtual.includes(key) ? 'virtual' : '';
@@ -267,7 +272,7 @@
                         key,
                         label: key === 'new_count' ? 'new' : key,
                         cls,
-                        click: (v, row) => `showLinked('${link.target}', '${link.filter_col}', '${String(row[link.value_col] ?? '').replace(/'/g, '&#39;')}')`
+                        click: row => showLinked(link.target, link.filter_col, String(row[link.value_col] ?? ''))
                     };
                 }
                 return { key, label: key === 'new_count' ? 'new' : key, cls };
@@ -313,9 +318,9 @@
 
             renderTablePage(
                 data,
-                p => `reloadTable('${name}', ${p}, '${sk || ''}', '${sd || ''}', ${filterQueryString()})`,
+                p => reloadTable(name, p, sk || '', sd || '', tableFilter),
                 sk && sd ? { key: sk, dir: sd } : null,
-                (k, d) => `reloadTable('${name}', 1, '${k}', '${d}', ${filterQueryString()})`,
+                (k, d) => reloadTable(name, 1, k, d, tableFilter),
                 fetchFn,
                 d => tableColumns(meta, d)
             );
@@ -349,9 +354,9 @@
                 setViewSpec(spec);
 
                 lastTable.sort = sk && sd ? { key: sk, dir: sd } : null;
-                lastTable.sortAction = (k, d) => `reloadTable('${name}', 1, '${k}', '${d}', ${filterQueryString()})`;
+                lastTable.sortAction = (k, d) => reloadTable(name, 1, k, d, tableFilter);
                 lastTable.silentFetch = fetchFn;
-                updateTableInPlace(data, p => `reloadTable('${name}', ${p}, '${sk || ''}', '${sd || ''}', ${filterQueryString()})`);
+                updateTableInPlace(data, p => reloadTable(name, p, sk || '', sd || '', tableFilter));
             } finally {
                 showTitleProgress(false);
             }
@@ -362,33 +367,32 @@
             showTable(target, 1, '', '', { col: filterCol, value: filterValue });
         }
 
-        function paginationHtml(data, pageCall) {
-            return `<button onclick="${pageCall(data.page - 1)}" ${data.page <= 1 ? 'disabled' : ''}>&laquo; Prev</button>` +
-                `<span>${data.page}</span>` +
-                `<button onclick="${pageCall(data.page + 1)}" ${data.page >= data.total_pages ? 'disabled' : ''}>Next &raquo;</button>`;
+        function paginationTemplate(data, pageCall) {
+            return html`
+                <button @click=${() => pageCall(data.page - 1)} ?disabled=${data.page <= 1}>&laquo; Prev</button>
+                <span>${data.page}</span>
+                <button @click=${() => pageCall(data.page + 1)} ?disabled=${data.page >= data.total_pages}>Next &raquo;</button>`;
         }
 
         function buildRows(data, cols) {
             const list = cols || data.columns;
-            return data.rows.map(row => {
-                let cells = '';
-                list.forEach(c => {
+            return repeat(data.rows, (row, i) => i, row => {
+                const cells = list.map(c => {
                     const key = typeof c === 'object' ? c.key : c;
-                    const cls = typeof c === 'object' && c.cls ? ` class="${c.cls}"` : '';
+                    const cls = typeof c === 'object' && c.cls ? c.cls : nothing;
                     const val = row[key];
                     const isNull = val === null || val === undefined;
                     const raw = isNull ? '' : val;
                     const display = isNull
-                        ? '<span class="null-cell">NULL</span>'
+                        ? html`<span class="null-cell">NULL</span>`
                         : (key.endsWith('_ts') ? formatTs(raw) : raw);
                     if (typeof c === 'object' && c.click && raw != null && raw !== '') {
-                        cells += `<td${cls}><a onclick="${c.click(raw, row)}">${display}</a></td>`;
-                    } else {
-                        cells += `<td${cls} title="${isNull ? '' : String(raw).replace(/"/g, '&quot;')}">${display}</td>`;
+                        return html`<td class=${cls}><a @click=${() => c.click(row)}>${display}</a></td>`;
                     }
+                    return html`<td class=${cls} title=${isNull ? '' : String(raw)}>${display}</td>`;
                 });
-                return '<tr>' + cells + '</tr>';
-            }).join('');
+                return html`<tr>${cells}</tr>`;
+            });
         }
 
         function buildThead(data, sort, sortAction, cols) {
@@ -399,35 +403,42 @@
                 ? Object.keys(meta.links).concat(Object.values(meta.links).map(l => l.value_col))
                 : [])
                 .concat(meta.virtual_cols || []);
-            let thead = '<tr>';
-            list.forEach(c => {
+            return html`<tr>${list.map(c => {
                 const key = typeof c === 'object' ? c.key : c;
                 const label = typeof c === 'object' ? c.label : c;
-                const cls = typeof c === 'object' && c.cls ? c.cls : '';
+                const cls = typeof c === 'object' && c.cls ? c.cls : nothing;
                 const isSorted = sort && sort.key === key;
-                const arrow = isSorted ? (sort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : '';
+                const arrow = isSorted ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
                 const sortable = !(typeof c === 'object' && c.sortable === false);
-                const onclick = sortAction && sortable
-                    ? `onclick="${sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')}"`
-                    : '';
-                const info = `<span class="col-info" title="Column info" onclick="event.stopPropagation(); showColumnInfo(event, '${tableName}', '${key}')">i</span>`;
-                const hide = protectedCols.includes(key) ? '' :
-                    `<span class="col-hide" title="Hide this column" onclick="event.stopPropagation(); hideColumn('${tableName}', '${key}')">&times;</span>`;
-                const actions = `<span class="col-actions">${info}${hide}</span>`;
-                thead += `<th class="sortable${cls ? ' ' + cls : ''}" style="cursor:pointer" ${onclick}><span class="th-inner"><span class="col-label">${label}${arrow}</span>${actions}</span></th>`;
-            });
-            return thead + '</tr>';
+                const sortClick = sortAction && sortable
+                    ? () => sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')
+                    : undefined;
+                const info = html`<span class="col-info" title="Column info" @click=${e => showColumnInfo(e, tableName, key)}>i</span>`;
+                const hide = protectedCols.includes(key) ? nothing :
+                    html`<span class="col-hide" title="Hide this column" @click=${e => { e.stopPropagation(); hideColumn(tableName, key); }}>&times;</span>`;
+                const actions = html`<span class="col-actions">${info}${hide}</span>`;
+                return html`<th class="sortable ${cls}" style="cursor:pointer" @click=${sortClick}><span class="th-inner"><span class="col-label">${label}${arrow}</span>${actions}</span></th>`;
+            })}</tr>`;
+        }
+
+        function renderTableView(data, pageCall, sort, sortAction, silentFetch, colsFn) {
+            const cols = colsFn ? colsFn(data) : null;
+            const el = document.getElementById('content');
+            if (!el._$litPart$) el.innerHTML = '';
+            render(html`
+                <div class="info" id="info-el">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>
+                <div class="pagination" id="pag-top">${paginationTemplate(data, pageCall)}</div>
+                <div class="container"><table>
+                    <thead id="thead-el">${buildThead(data, sort, sortAction, cols)}</thead>
+                    <tbody id="tbody-el">${buildRows(data, cols)}</tbody>
+                </table></div>
+                <div class="pagination" id="pag-bottom">${paginationTemplate(data, pageCall)}</div>`,
+                el);
         }
 
         function renderTablePage(data, pageCall, sort, sortAction, silentFetch, colsFn) {
-            const cols = colsFn ? colsFn(data) : null;
             lastTable = { data, pageCall, sort, sortAction, silentFetch, colsFn };
-            document.getElementById('content').innerHTML =
-                `<div class="info" id="info-el">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>` +
-                `<div class="pagination" id="pag-top">${paginationHtml(data, pageCall)}</div>` +
-                '<div class="container"><table><thead id="thead-el">' + buildThead(data, sort, sortAction, cols) + '</thead>' +
-                '<tbody id="tbody-el">' + buildRows(data, cols) + '</tbody></table></div>' +
-                `<div class="pagination" id="pag-bottom">${paginationHtml(data, pageCall)}</div>`;
+            renderTableView(data, pageCall, sort, sortAction, silentFetch, colsFn);
         }
 
         function updateTableInPlace(data, pageCall) {
@@ -435,14 +446,7 @@
             removeColumnInfo();
             lastTable.data = data;
             lastTable.pageCall = pageCall;
-            const cols = lastTable.colsFn ? lastTable.colsFn(data) : null;
-            document.getElementById('info-el').textContent =
-                `${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}`;
-            const pag = paginationHtml(data, pageCall);
-            document.getElementById('pag-top').innerHTML = pag;
-            document.getElementById('pag-bottom').innerHTML = pag;
-            document.getElementById('thead-el').innerHTML = buildThead(data, lastTable.sort, lastTable.sortAction, cols);
-            document.getElementById('tbody-el').innerHTML = buildRows(data, cols);
+            renderTableView(data, lastTable.pageCall, lastTable.sort, lastTable.sortAction, lastTable.silentFetch, lastTable.colsFn);
         }
 
         async function silentReload() {
@@ -557,7 +561,7 @@
             const opts = localeOptions.map(o =>
                 `<option value="${o.value}" ${o.value === tsLocale ? 'selected' : ''}>${o.label}</option>`
             ).join('');
-            document.getElementById('content').innerHTML =
+            setContentHtml(
                 '<div class="container"><div class="settings">' +
                 '<div class="settings-row">' +
                 '<label for="ts-locale">Timestamp format:</label>' +
@@ -576,11 +580,11 @@
                 '</div>' +
                 '<div class="info" id="hidden-cols-info">Hidden columns: none</div>' +
                 '<div class="info" id="client-info">Loading...</div>' +
-                '</div></div>';
+                '</div></div>');
             document.getElementById('ts-locale').addEventListener('change', e => {
                 tsLocale = e.target.value;
                 localStorage.setItem('tsLocale', tsLocale);
-                if (lastTable) renderTablePage(lastTable.data, lastTable.pageCall);
+                if (lastTable) renderTablePage(lastTable.data, lastTable.pageCall, lastTable.sort, lastTable.sortAction, lastTable.silentFetch, lastTable.colsFn);
             });
             refreshSettingsInfo();
             settingsRefreshId = setInterval(refreshSettingsInfo, 3000);
@@ -688,7 +692,7 @@
                 tsMode === 'human' ? 'Timestamps: Human' : 'Timestamps: Raw';
             debug(`timestamps button pressed -> ${tsMode === 'human' ? 'human' : 'raw'}`);
             if (lastTable) {
-                renderTablePage(lastTable.data, lastTable.pageCall, lastTable.sort, lastTable.sortAction, lastTable.silentFetch);
+                renderTablePage(lastTable.data, lastTable.pageCall, lastTable.sort, lastTable.sortAction, lastTable.silentFetch, lastTable.colsFn);
             }
         }
 
@@ -706,5 +710,12 @@
                 return val;
             }
         }
+
+        // The remaining views (menu, settings) and the top buttons in index.html
+        // still use inline onclick attributes, which cannot see module scope.
+        Object.assign(window, {
+            toggleLive, refresh, cleanNew, toggleTsMode, goBack,
+            showTable, showSettings, saveLiveInterval, hideEmptyColumns, showAllColumns
+        });
 
         showHome();

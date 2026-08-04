@@ -988,7 +988,7 @@ def create_app():
     }
     load_settings(app)
     app.router.add_get("/", index)
-    app.router.add_get("/static/{name}", static_file)
+    app.router.add_get("/static/{name:.*}", static_file)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/api/settings", api_get_settings)
     app.router.add_post("/api/settings", api_set_settings)

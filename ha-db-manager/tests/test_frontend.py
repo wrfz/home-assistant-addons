@@ -79,7 +79,7 @@ def test_frontend_sort_reloads_in_place():
     assert "function showTitleProgress(" in appjs
     assert "updateTableInPlace(data" in appjs
     # header sort actions must route through reloadTable, not showTable:
-    assert "reloadTable('${name}', 1, '${k}', '${d}'" in appjs
+    assert "reloadTable(name, 1, k, d, tableFilter)" in appjs
     # a small progress indicator sits next to the page title:
     assert 'id="title-progress"' in html
     assert "title-progress.hidden" in css
@@ -91,7 +91,7 @@ def test_frontend_sort_reloads_in_place():
 def test_frontend_filtered_table_title_shows_filter_value():
     appjs = APPJS.read_text()
     # linked cells navigate to the target table with a filter
-    assert "showLinked('${link.target}', '${link.filter_col}'" in appjs
+    assert "showLinked(link.target, link.filter_col" in appjs
     # the title no longer carries a client-side label, the server resolves it
     assert "filterLabel" not in appjs
 
@@ -134,7 +134,7 @@ def test_frontend_hide_columns_controls():
     assert "function hideColumn(" in appjs
     assert "/api/columns/hide" in appjs
     assert "class=\"col-hide\"" in appjs
-    assert "event.stopPropagation(); hideColumn(" in appjs
+    assert "e.stopPropagation(); hideColumn(tableName, key)" in appjs
     # settings view offers the two bulk actions and shows the hidden columns
     assert "Hide Empty Columns" in appjs
     assert "Show All Columns" in appjs
@@ -175,14 +175,14 @@ def test_frontend_column_info_icon():
     # every column header gets an info icon next to the hide button (or at the
     # far right when the column cannot be hidden)
     assert 'class="col-info"' in appjs
-    assert "showColumnInfo(event" in appjs
+    assert "showColumnInfo(e, tableName, key)" in appjs
     assert "col-info-popup" in appjs
     # both icons are wrapped in a shared container so they never wrap
     # onto separate lines (the info icon sits directly left of the hide x)
     assert "class=\"col-actions\"" in appjs
     assert "col-actions" in css
     # clicking the icon must not trigger the column sort
-    assert "event.stopPropagation(); showColumnInfo(" in appjs
+    assert "e.stopPropagation(); hideColumn(tableName, key)" in appjs
     # leaving the popup removes it from the DOM again
     assert "mouseleave" in appjs
     assert "removeColumnInfo" in appjs
