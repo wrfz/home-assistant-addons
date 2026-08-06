@@ -476,13 +476,19 @@ def _count_meta_rows(conn, spec, filter_col=None, filter_value=None):
 
 
 def count_table_snapshot(conn, cdef):
-    """Current (MAX, MIN) of a count table's primary key (O(1) index lookups)."""
-    row = db.execute(
-        conn,
-        f"SELECT MAX({db.quote(cdef['pk'])}) AS mx, MIN({db.quote(cdef['pk'])}) AS mn "
-        f"FROM {db.quote(cdef['table'])}",
-    ).fetchone()
-    return row["mx"], row["mn"]
+    """Current (MAX, MIN) of a count table's primary key.
+
+    MAX and MIN are run as separate statements: a combined ``SELECT MAX(pk),
+    MIN(pk)`` forces SQLite to scan the whole table, while a lone MAX/MIN on an
+    INTEGER PRIMARY KEY is answered in O(1) via the rowid b-tree.
+    """
+    mx = db.execute(
+        conn, f"SELECT MAX({db.quote(cdef['pk'])}) AS m FROM {db.quote(cdef['table'])}"
+    ).fetchone()["m"]
+    mn = db.execute(
+        conn, f"SELECT MIN({db.quote(cdef['pk'])}) AS m FROM {db.quote(cdef['table'])}"
+    ).fetchone()["m"]
+    return mx, mn
 
 
 def _count_table_rebuild(conn, cdef):
@@ -496,15 +502,24 @@ def _count_table_rebuild(conn, cdef):
 
 
 def _count_table_delta(conn, cdef, last_max):
-    """Counts of rows appended after ``last_max`` -> {group value: row count}."""
+    """Counts of rows appended after ``last_max`` -> {group value: row count}.
+
+    Fetches only the (few) new rows via the INTEGER PRIMARY KEY range and
+    aggregates them in Python. Doing the ``GROUP BY`` in SQL would let SQLite
+    pick a full covering-index scan over ``ix_*_metadata_id`` on the big
+    history tables (hundreds of ms) instead of the rowid range (sub-ms).
+    """
     res = db.execute(
         conn,
-        f"SELECT {db.quote(cdef['group'])} AS g, COUNT(*) AS n "
-        f"FROM {db.quote(cdef['table'])} "
-        f"WHERE {db.quote(cdef['pk'])} > ? GROUP BY {db.quote(cdef['group'])}",
+        f"SELECT {db.quote(cdef['group'])} "
+        f"FROM {db.quote(cdef['table'])} WHERE {db.quote(cdef['pk'])} > ?",
         (last_max,),
     )
-    return {r["g"]: r["n"] for r in res.fetchall()}
+    counts = {}
+    for r in res.fetchall():
+        g = r[cdef["group"]]
+        counts[g] = counts.get(g, 0) + 1
+    return counts
 
 
 def get_count_counts(conn, cdef, counts_state, phases=None):
@@ -527,21 +542,23 @@ def get_count_counts(conn, cdef, counts_state, phases=None):
     mx, mn = count_table_snapshot(conn, cdef)
     entry = counts_state.get(cdef["table"])
     if entry is None or mn != entry["last_min"]:
+        counts = _count_table_rebuild(conn, cdef)
         if phases:
             phases.mark(f"count({cdef['table']})")
         entry = {
             "last_max": mx,
             "last_min": mn,
-            "counts": _count_table_rebuild(conn, cdef),
+            "counts": counts,
             "baseline": None,
             "baseline_counts": None,
         }
         counts_state[cdef["table"]] = entry
     elif mx is not None and mx > entry["last_max"]:
+        delta = _count_table_delta(conn, cdef, entry["last_max"])
         if phases:
             phases.mark(f"delta({cdef['table']})")
         counts = entry["counts"]
-        for g, n in _count_table_delta(conn, cdef, entry["last_max"]).items():
+        for g, n in delta.items():
             counts[g] = counts.get(g, 0) + n
         entry["last_max"] = mx
     return entry
@@ -596,19 +613,21 @@ def count_view_signature(conn, table):
 
     Returns a tuple of (MAX, MIN) for the meta table's primary key and every
     count table's primary key. MAX detects appended rows, MIN detects
-    purges/cleanups (which delete the oldest rows). Both are O(1) index
-    lookups, so this runs in ~0.1ms even on huge tables -- unlike recomputing
-    the aggregated counts.
+    purges/cleanups (which delete the oldest rows). Each MAX/MIN is a separate
+    O(1) rowid lookup on the primary key (a combined MAX+MIN would force a full
+    table scan), so this runs in ~0.1ms even on huge tables -- unlike
+    recomputing the aggregated counts.
     """
     spec = USAGE_SPECS[table]
     sig = []
     for t, pk in [(table, spec["meta_pk"])] + [(c["table"], c["pk"]) for c in spec["counts"]]:
-        row = db.execute(
-            conn,
-            f"SELECT MAX({db.quote(pk)}) AS mx, MIN({db.quote(pk)}) AS mn "
-            f"FROM {db.quote(t)}",
-        ).fetchone()
-        sig.append((row["mx"], row["mn"]))
+        mx = db.execute(
+            conn, f"SELECT MAX({db.quote(pk)}) AS m FROM {db.quote(t)}"
+        ).fetchone()["m"]
+        mn = db.execute(
+            conn, f"SELECT MIN({db.quote(pk)}) AS m FROM {db.quote(t)}"
+        ).fetchone()["m"]
+        sig.append((mx, mn))
     return tuple(sig)
 
 
