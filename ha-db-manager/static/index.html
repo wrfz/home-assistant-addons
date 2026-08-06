@@ -6,17 +6,19 @@
     <link rel="stylesheet" href="static/style.css?v=__APP_VERSION__">
 </head>
 <body>
-    <div id="top-buttons">
-        <button class="top-btn" id="live-toggle" onclick="toggleLive()">Live: Off</button>
-        <button class="top-btn" onclick="refresh()">&#8635; Refresh</button>
-        <button class="top-btn" id="clean-new" onclick="cleanNew()" style="display:none">Clean New</button>
-        <button class="top-btn" id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
-    </div>
+    <header class="app-header">
+        <div class="title-row">
+            <h1 id="title">Home Assistant DB Manager</h1>
+            <span id="title-progress" class="title-progress hidden"></span>
+        </div>
+        <div id="top-buttons">
+            <button class="top-btn" id="live-toggle" onclick="toggleLive()">Live: Off</button>
+            <button class="top-btn" onclick="refresh()">&#8635; Refresh</button>
+            <button class="top-btn" id="clean-new" onclick="cleanNew()" style="display:none">Clean New</button>
+            <button class="top-btn" id="ts-toggle" onclick="toggleTsMode()">Timestamps: Human</button>
+        </div>
+    </header>
     <div id="back"><a onclick="goBack()">&larr; Back</a></div>
-    <div class="title-row">
-        <h1 id="title">Home Assistant DB Manager</h1>
-        <span id="title-progress" class="title-progress hidden"></span>
-    </div>
     <div id="content"></div>
     <div id="debug-panel">
         <div id="debug-title">Debug</div>
