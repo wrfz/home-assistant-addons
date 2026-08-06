@@ -2,6 +2,17 @@
 
 All notable changes to the Home Assistant DB Manager add-on.
 
+## 2026.8.3
+
+- **Count views much faster**: count columns (states, statistics, events) use
+  incremental in-memory counters that are prewarmed at startup, so page
+  navigation only reads the rows that changed since the last visit.
+- Snapshot queries use separate `MAX`/`MIN` statements (milliseconds instead of
+  a full table scan) and deltas are aggregated in Python from a plain rowid
+  range fetch, avoiding slow `GROUP BY` index scans.
+- Purged rows are detected immediately: when the minimum row id moves up, the
+  counter is rebuilt and the baseline is reset.
+
 ## 2026.8.2
 
 - **Column info**: every column header now shows an "i" tooltip with a
