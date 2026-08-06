@@ -219,6 +219,7 @@ USAGE_SPECS = {
         "label": "States",
         "base": "SELECT sm.entity_id, sm.metadata_id FROM states_meta sm",
         "base_cols": ["entity_id", "metadata_id"],
+        "meta_pk": "metadata_id",
         "counts": [
             {"table": "states", "pk": "state_id", "group": "metadata_id",
              "count": "state_count"},
@@ -234,6 +235,7 @@ USAGE_SPECS = {
         "label": "Statistics",
         "base": "SELECT sm.statistic_id, sm.id AS metadata_id FROM statistics_meta sm",
         "base_cols": ["statistic_id", "metadata_id"],
+        "meta_pk": "id",
         "counts": [
             {"table": "statistics", "pk": "id", "group": "metadata_id",
              "count": "stat_count"},
@@ -252,6 +254,7 @@ USAGE_SPECS = {
         "label": "Events",
         "base": "SELECT et.event_type, et.event_type_id FROM event_types et",
         "base_cols": ["event_type", "event_type_id"],
+        "meta_pk": "event_type_id",
         "counts": [
             {"table": "events", "pk": "event_id", "group": "event_type_id",
              "count": "event_count"},
@@ -506,42 +509,45 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None, visible=No
     return f"SELECT {', '.join(selects)} " + " ".join(joins) + where, params
 
 
-def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
-                     filter_col=None, filter_value=None, visible=None, phases=None):
-    """Run a paged count view for a meta table (see USAGE_SPECS).
+def count_view_signature(conn, table):
+    """Cheap freshness signature of a count view.
 
-    Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
-    the global max of the first count table's primary key (the frontend `since`
-    anchor for the `new` column). Only the columns listed in `visible` are
-    fetched (default: every column); a sort on a hidden column falls back to the
-    spec's default sort. When `filter_col`/`filter_value` are given the meta
-    rows are restricted to matching values.
+    Returns a tuple of (MAX, MIN) for the meta table's primary key and every
+    count table's primary key. MAX detects appended rows, MIN detects
+    purges/cleanups (which delete the oldest rows). Both are O(1) index
+    lookups, so this runs in ~0.1ms even on huge tables -- unlike recomputing
+    the aggregated counts.
+    """
+    spec = USAGE_SPECS[table]
+    sig = []
+    for t, pk in [(table, spec["meta_pk"])] + [(c["table"], c["pk"]) for c in spec["counts"]]:
+        row = db.execute(
+            conn,
+            f"SELECT MAX({db.quote(pk)}) AS mx, MIN({db.quote(pk)}) AS mn "
+            f"FROM {db.quote(t)}",
+        ).fetchone()
+        sig.append((row["mx"], row["mn"]))
+    return tuple(sig)
+
+
+def build_count_view(conn, spec, since, filter_col=None, filter_value=None,
+                     visible=None, phases=None):
+    """Materialize the full result set of a count view in a single query.
+
+    Returns (columns, rows, total_rows, baseline). Sorting, filtering and
+    pagination are applied in Python on the (small) result set by
+    ``serve_count_view``, so this is only called when the underlying data
+    actually changed (see ``count_view_signature``).
     """
     if visible is None:
         visible = _count_view_columns(spec)
-    if sort not in visible:
-        sort = spec["default_sort"] if spec["default_sort"] in visible else visible[0]
-    if sort_dir not in ("asc", "desc"):
-        sort_dir = "desc"
     first = spec["counts"][0]
     base, base_params = _count_view_base(spec, since, filter_col, filter_value, visible)
     if phases:
-        phases.mark(f"count({first['table']})")
-    total_rows = db.execute(
-        conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t", base_params
-    ).fetchone()["c"]
-    offset = (page - 1) * page_size
-    if phases:
         phases.mark(f"select({first['table']})")
-    res = db.execute(
-        conn,
-        f"SELECT * FROM ({base}) AS t "
-        f"ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?",
-        base_params + [page_size, offset],
-    )
+    res = db.execute(conn, f"SELECT * FROM ({base}) AS t", base_params)
     columns = list(res.columns)
     rows = res.fetchall()
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
     if phases:
         phases.mark(f"baseline({first['table']})")
     row = db.execute(
@@ -549,7 +555,24 @@ def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
         f"SELECT MAX({db.quote(first['pk'])}) AS m FROM {db.quote(first['table'])}",
     ).fetchone()
     baseline = row["m"] if row and row["m"] is not None else 0
-    return columns, rows, total_pages, total_rows, baseline
+    return columns, rows, len(rows), baseline
+
+
+def serve_count_view(entry, page, page_size, sort, sort_dir):
+    """Return a paged/sorted slice of a cached count view (pure Python)."""
+    columns = entry["columns"]
+    if sort not in columns:
+        sort = entry["default_sort"] if entry["default_sort"] in columns else columns[0]
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+    rows = entry["rows"]
+    if sort in columns:
+        rows = sorted(rows, key=lambda r: r[sort], reverse=(sort_dir == "desc"))
+    total_rows = len(rows)
+    offset = (page - 1) * page_size
+    page_rows = rows[offset:offset + page_size]
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    return columns, page_rows, total_pages, total_rows, entry["baseline"]
 
 
 async def api_table(request):
@@ -594,13 +617,44 @@ async def api_table(request):
                     establish = True
             hidden = request.app["state"]["hidden_columns"].get(table_name, set())
             visible = [c for c in _count_view_columns(spec) if c not in hidden]
-            columns, rows, total_pages, total_rows, baseline = count_view_paged(
-                conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
-                filter_col, filter_value, visible, phases,
+            sort = sort or spec["default_sort"]
+            if sort not in visible:
+                sort = spec["default_sort"] if spec["default_sort"] in visible else visible[0]
+            if sort_dir not in ("asc", "desc"):
+                sort_dir = "desc"
+            cache = request.app["state"]["counts_cache"]
+            key = (table_name, since, filter_col, filter_value, tuple(visible))
+            entry = cache.get(key)
+            signature = count_view_signature(conn, table_name)
+            if entry is not None and entry["signature"] == signature:
+                phases.mark("cache")
+            else:
+                columns, all_rows, total_rows, baseline = build_count_view(
+                    conn, spec, since, filter_col, filter_value, visible, phases,
+                )
+                entry = {
+                    "signature": signature,
+                    "columns": columns,
+                    "rows": all_rows,
+                    "baseline": baseline,
+                    "default_sort": spec["default_sort"],
+                }
+                cache[key] = entry
+                if len(cache) > 32:
+                    for stale_key in list(cache)[:len(cache) - 32]:
+                        del cache[stale_key]
+            columns, rows, total_pages, total_rows, baseline = serve_count_view(
+                entry, page, page_size, sort, sort_dir,
             )
             if establish:
                 request.app["state"]["baselines"][table_name] = baseline
                 log.info("Established new-baseline %s = %s", table_name, baseline)
+                # The next navigation uses the stored baseline as `since` (a
+                # different cache key). The just-built rows are identical (all
+                # new_count = 0), so alias the entry under that key too.
+                future_key = (table_name, baseline, filter_col, filter_value, tuple(visible))
+                if future_key not in cache:
+                    cache[future_key] = entry
             filter_label = (
                 resolve_filter_label(conn, table_name, filter_col, filter_value)
                 if filter_col and filter_value is not None else None
@@ -731,17 +785,6 @@ def page_signature(conn, spec, hidden=None):
     sort = spec.get("sort")
     sort_dir = spec.get("dir") or "asc"
     hidden = hidden or {}
-    if spec.get("counts") and table in USAGE_SPECS:
-        visible = [c for c in _count_view_columns(USAGE_SPECS[table]) if c not in hidden.get(table, set())]
-        columns, rows, total_pages, total_rows, baseline = count_view_paged(
-            conn, USAGE_SPECS[table], page, page_size,
-            sort or USAGE_SPECS[table]["default_sort"], sort_dir,
-            parse_int(spec.get("since"), -1),
-            spec.get("filter_col"), spec.get("filter_value"), visible,
-        )
-        payload = json.dumps([total_rows] + [dict(r) for r in rows], cls=SafeEncoder, sort_keys=True)
-        return hashlib.md5(payload.encode("utf-8")).hexdigest()
-
     filter_col = spec.get("filter_col")
     filter_value = spec.get("filter_value")
     where = ""
@@ -772,7 +815,13 @@ def page_signature(conn, spec, hidden=None):
 def check_view_changed(conn, spec, state, hidden=None):
     is_stats = spec.get("counts") or spec.get("table") in STATS_TABLES
     mid = max_id(conn, spec)
-    sig = page_signature(conn, spec, hidden) if is_stats else None
+    if is_stats:
+        if spec.get("counts") and spec.get("table") in USAGE_SPECS:
+            sig = count_view_signature(conn, spec["table"])
+        else:
+            sig = page_signature(conn, spec, hidden)
+    else:
+        sig = None
     if mid is None:
         state["max_id"] = None
         state["sig"] = sig
@@ -1041,6 +1090,7 @@ def create_app():
         "watches": {},
         "baselines": {},
         "hidden_columns": {},
+        "counts_cache": {},
     }
     load_settings(app)
     app.router.add_get("/", index)

@@ -48,18 +48,29 @@ def test_page_signature_stable_and_changes(tmp_path):
     c.close()
 
 
-def test_page_signature_count_view_stable_and_changes(tmp_path):
+def test_count_view_signature_stable_and_changes(tmp_path):
     path = tmp_path / "watch.db"
     c = build_db(str(path))
     seed(c)
-    spec = {"table": "states_meta", "counts": True, "page": 1, "page_size": 100}
-    sig1 = app_module.page_signature(c, spec)
+    sig1 = app_module.count_view_signature(c, "states_meta")
     c.execute(
         "INSERT INTO states (entity_id, metadata_id, state, last_updated_ts) VALUES (?,?,?,?)",
         ("sensor.b", 2, "on", 9999.0),
     )
     c.commit()
-    sig2 = app_module.page_signature(c, spec)
+    sig2 = app_module.count_view_signature(c, "states_meta")
+    assert sig1 != sig2
+    c.close()
+
+
+def test_count_view_signature_detects_purge(tmp_path):
+    path = tmp_path / "watch.db"
+    c = build_db(str(path))
+    seed(c)
+    sig1 = app_module.count_view_signature(c, "states_meta")
+    c.execute("DELETE FROM states WHERE state_id = 1")
+    c.commit()
+    sig2 = app_module.count_view_signature(c, "states_meta")
     assert sig1 != sig2
     c.close()
 

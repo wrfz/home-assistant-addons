@@ -251,3 +251,45 @@ async def test_clean_new_covers_all_usage_tables(client):
     assert r.status == 200
     # no persistence side effects: settings file stays baseline-free
     assert "baselines" not in (await r.json())
+
+
+async def test_count_view_served_from_cache_and_invalidated(client, seed_db):
+    # first request builds the cache (including the baseline alias entry)
+    r = await client.get(
+        "/api/table/states_meta", params={"counts": "1", "sort": "entity_id", "dir": "asc"}
+    )
+    assert r.status == 200
+    first = await r.json()
+    cache = client.server.app["state"]["counts_cache"]
+    assert cache
+
+    # second request with unchanged DB is served from the cache (no rebuild)
+    r = await client.get(
+        "/api/table/states_meta", params={"counts": "1", "sort": "entity_id", "dir": "asc"}
+    )
+    second = await r.json()
+    assert second["rows"] == first["rows"]
+    n = len(cache)
+
+    # a page flip on the same view also hits the cache
+    r = await client.get(
+        "/api/table/states_meta",
+        params={"counts": "1", "page": "1", "page_size": "2", "sort": "entity_id", "dir": "asc"},
+    )
+    assert (await r.json())["total_rows"] == 3
+    assert len(cache) == n
+
+    # a DB change invalidates the freshness signature -> next request rebuilds
+    conn = sqlite3.connect(seed_db)
+    conn.execute(
+        "INSERT INTO states (entity_id, metadata_id, state, last_updated_ts) VALUES (?,?,?,?)",
+        ("sensor.a", 1, "3.0", 1200.0),
+    )
+    conn.commit()
+    conn.close()
+
+    r = await client.get(
+        "/api/table/states_meta", params={"counts": "1", "sort": "entity_id", "dir": "asc"}
+    )
+    data = await r.json()
+    assert {row["entity_id"]: row["state_count"] for row in data["rows"]}["sensor.a"] == 3
