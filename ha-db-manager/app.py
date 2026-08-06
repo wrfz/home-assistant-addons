@@ -1,5 +1,6 @@
 import re
 import os
+import time
 import asyncio
 import hashlib
 import json
@@ -8,6 +9,33 @@ from pathlib import Path
 from aiohttp import web
 
 import db
+
+
+class Phases:
+    """Lightweight per-request phase timing for performance debugging.
+
+    Records wall-clock marks; ``render()`` returns per-phase and total
+    durations so slow queries are easy to spot in the add-on logs.
+    """
+
+    __slots__ = ("marks",)
+
+    def __init__(self):
+        self.marks = [("start", time.perf_counter())]
+
+    def mark(self, name):
+        self.marks.append((name, time.perf_counter()))
+
+    def render(self):
+        marks = self.marks
+        parts = []
+        for i in range(1, len(marks)):
+            name, t = marks[i]
+            prev = marks[i - 1][1]
+            parts.append(f"{name}={(t - prev) * 1000:.1f}ms")
+        if len(marks) > 1:
+            parts.append(f"total={(marks[-1][1] - marks[0][1]) * 1000:.1f}ms")
+        return " | ".join(parts)
 
 
 def format_bytes(size):
@@ -32,7 +60,7 @@ STATIC_DIR = Path(os.environ.get("HA_STATIC_DIR", "/opt/static"))
 CONFIG_YAML = Path(os.environ.get("HA_CONFIG_YAML", "/opt/config.yaml"))
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, os.environ.get("HA_LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -110,7 +138,7 @@ async def api_tables(request):
     return web.json_response(data)
 
 
-def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, default_sort, columns=None):
+def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, default_sort, columns=None, phases=None):
     """Run a paged SELECT against a table with an optional WHERE clause.
 
     Only the given `columns` are fetched from the database (default: all table
@@ -132,10 +160,14 @@ def query_paged(conn, table, where, params, page, page_size, sort, sort_dir, def
     if sort:
         order_clause = f' ORDER BY {db.quote(sort)} {sort_dir.upper()}'
     select = ", ".join(db.quote(c) for c in columns)
+    if phases:
+        phases.mark(f"count({table})")
     total_rows = db.execute(
         conn, f'SELECT COUNT(*) AS c FROM {db.quote(table)}{where}', params
     ).fetchone()["c"]
     offset = (page - 1) * page_size
+    if phases:
+        phases.mark(f"select({table})")
     res = db.execute(
         conn,
         f'SELECT {select} FROM {db.quote(table)}{where}{order_clause} LIMIT ? OFFSET ?',
@@ -475,7 +507,7 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None, visible=No
 
 
 def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
-                     filter_col=None, filter_value=None, visible=None):
+                     filter_col=None, filter_value=None, visible=None, phases=None):
     """Run a paged count view for a meta table (see USAGE_SPECS).
 
     Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
@@ -491,11 +523,16 @@ def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
         sort = spec["default_sort"] if spec["default_sort"] in visible else visible[0]
     if sort_dir not in ("asc", "desc"):
         sort_dir = "desc"
+    first = spec["counts"][0]
     base, base_params = _count_view_base(spec, since, filter_col, filter_value, visible)
+    if phases:
+        phases.mark(f"count({first['table']})")
     total_rows = db.execute(
         conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t", base_params
     ).fetchone()["c"]
     offset = (page - 1) * page_size
+    if phases:
+        phases.mark(f"select({first['table']})")
     res = db.execute(
         conn,
         f"SELECT * FROM ({base}) AS t "
@@ -505,7 +542,8 @@ def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
     columns = list(res.columns)
     rows = res.fetchall()
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    first = spec["counts"][0]
+    if phases:
+        phases.mark(f"baseline({first['table']})")
     row = db.execute(
         conn,
         f"SELECT MAX({db.quote(first['pk'])}) AS m FROM {db.quote(first['table'])}",
@@ -533,9 +571,11 @@ async def api_table(request):
         table_name, page, page_size, sort, sort_dir, counts, filter_col, filter_value,
     )
 
+    phases = Phases()
     if table_name not in db.list_tables(get_db()):
         log.warning("Table '%s' not found", table_name)
         return web.json_response({"error": "Table not found"}, status=404)
+    phases.mark("tables")
 
     if counts:
         spec = USAGE_SPECS.get(table_name)
@@ -544,6 +584,7 @@ async def api_table(request):
         if filter_col and filter_col not in spec["filter_cols"]:
             return web.json_response({"error": "Invalid filter column"}, status=400)
         conn = get_db()
+        phases.mark("connect")
         try:
             establish = False
             if since < 0:
@@ -555,7 +596,7 @@ async def api_table(request):
             visible = [c for c in _count_view_columns(spec) if c not in hidden]
             columns, rows, total_pages, total_rows, baseline = count_view_paged(
                 conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
-                filter_col, filter_value, visible,
+                filter_col, filter_value, visible, phases,
             )
             if establish:
                 request.app["state"]["baselines"][table_name] = baseline
@@ -566,6 +607,7 @@ async def api_table(request):
             )
         finally:
             conn.close()
+        phases.mark("serialize")
         data = {
             "table_name": table_name,
             "counts": True,
@@ -578,18 +620,23 @@ async def api_table(request):
             "global_baseline": baseline,
             "filter_label": filter_label,
         }
-        log.info("Count view '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
+        log.info(
+            "Count view '%s': %d rows total, returning %d rows | %s",
+            table_name, total_rows, len(rows), phases.render(),
+        )
         return web.Response(
             text=json.dumps(data, cls=SafeEncoder),
             content_type="application/json",
         )
 
     conn = get_db()
+    phases.mark("connect")
     try:
         table_cols = db.table_columns(conn, table_name)
     except Exception:
         conn.close()
         return web.json_response({"error": "Table not found"}, status=404)
+    phases.mark("columns")
     hidden = request.app["state"]["hidden_columns"].get(table_name, set())
     visible = [c for c in sorted(table_cols) if c not in hidden]
     try:
@@ -600,12 +647,12 @@ async def api_table(request):
                 conn, table_name,
                 f" WHERE {db.quote(filter_col)} = ?", [filter_value],
                 page, page_size, sort, sort_dir, DETAIL_DEFAULT_SORTS.get(table_name),
-                visible,
+                visible, phases,
             )
         else:
             columns, rows, total_pages, total_rows = query_paged(
                 conn, table_name, "", [], page, page_size, sort, sort_dir, None,
-                visible,
+                visible, phases,
             )
     except KeyError:
         conn.close()
@@ -614,7 +661,10 @@ async def api_table(request):
     finally:
         conn.close()
 
-    log.info("Table '%s': %d rows total, returning %d rows", table_name, total_rows, len(rows))
+    log.info(
+        "Table '%s': %d rows total, returning %d rows | %s",
+        table_name, total_rows, len(rows), phases.render(),
+    )
 
     data = {
         "table_name": table_name,
@@ -628,12 +678,14 @@ async def api_table(request):
     }
     if filter_col and filter_value is not None:
         conn = get_db()
+        phases.mark("filter_conn")
         try:
             data["filter_label"] = resolve_filter_label(conn, table_name, filter_col, filter_value)
         finally:
             conn.close()
     else:
         data["filter_label"] = None
+    phases.mark("serialize")
     return web.Response(
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
@@ -788,9 +840,13 @@ async def watch_loop(app):
             try:
                 conn = get_db()
                 try:
+                    t0 = time.perf_counter()
                     changed = check_view_changed(
                         conn, watch["spec"], watch["state"], app["state"]["hidden_columns"]
                     )
+                    elapsed = (time.perf_counter() - t0) * 1000
+                    if elapsed > 250:
+                        log.info("Slow watch check %s: %.0fms", key, elapsed)
                 finally:
                     conn.close()
                 if changed:

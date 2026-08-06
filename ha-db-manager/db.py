@@ -5,15 +5,27 @@ double-quoted identifiers. This module translates those to the active
 dialect, normalizes values (datetimes -> epoch floats) and provides
 catalog queries (tables / columns / max row id).
 """
+import logging
 import os
 import re
 import sqlite3
+import time as _time
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 DEFAULT_SQLITE_PATH = "/config/home-assistant_v2.db"
+
+_log = logging.getLogger(__name__)
+
+
+def _truncate(value, limit=400):
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
 
 
 def resolve_db_url():
@@ -198,6 +210,7 @@ class Backend:
     def execute(self, conn, sql, params=None):
         params = list(params) if params else []
         sql = self.convert_placeholders(sql)
+        t0 = _time.perf_counter()
         if self.kind == "sqlite":
             cur = conn.execute(sql, params)
             rows = [dict(r) for r in cur.fetchall()]
@@ -212,11 +225,18 @@ class Backend:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 if cur.description is None:
-                    return Result([], [])
-                rows = [dict(r) for r in cur.fetchall()]
-                columns = [d[0] for d in cur.description] if cur.description else []
+                    rows = []
+                    columns = []
+                else:
+                    rows = [dict(r) for r in cur.fetchall()]
+                    columns = [d[0] for d in cur.description]
         else:
             raise RuntimeError(f"Unsupported backend: {self.kind}")
+        duration = (_time.perf_counter() - t0) * 1000
+        _log.debug(
+            "SQL %.1fms %d rows: %s params=%s",
+            duration, len(rows), _truncate(sql), _truncate(params),
+        )
         return Result(columns, [{k: _epoch(v) for k, v in r.items()} for r in rows])
 
     def list_tables(self, conn):

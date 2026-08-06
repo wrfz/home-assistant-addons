@@ -1,6 +1,6 @@
 name: "Home Assistant DB Manager"
 description: "View and manage Home Assistant database tables (states, statistics, events) for SQLite, MySQL and PostgreSQL"
-version: "2026.8.1"
+version: "2026.8.2"
 slug: "ha-db-manager"
 url: "https://github.com/wrfz/home-assistant-addons"
 arch:
@@ -15,5 +15,7 @@ map:
   - config:ro
 startup: application
 boot: manual
-options: {}
-schema: {}
+options:
+  log_level: info
+schema:
+  log_level: list(info|debug)

@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r /opt/requirements.txt
 COPY config.yaml /opt/
 COPY app.py /opt/
 COPY db.py /opt/
+COPY run.sh /opt/
 COPY static /opt/static/
 
-CMD ["python3", "/opt/app.py"]
+CMD ["sh", "/opt/run.sh"]
