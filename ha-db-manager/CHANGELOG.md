@@ -4,14 +4,25 @@ All notable changes to the Home Assistant DB Manager add-on.
 
 ## 2026.8.3
 
-- **Count views much faster**: count columns (states, statistics, events) use
-  incremental in-memory counters that are prewarmed at startup, so page
-  navigation only reads the rows that changed since the last visit.
-- Snapshot queries use separate `MAX`/`MIN` statements (milliseconds instead of
-  a full table scan) and deltas are aggregated in Python from a plain rowid
-  range fetch, avoiding slow `GROUP BY` index scans.
-- Purged rows are detected immediately: when the minimum row id moves up, the
-  counter is rebuilt and the baseline is reset.
+- **Count views are now milliseconds-fast**: the count columns of the usage
+  views (states, statistics, events) are served from incremental in-memory
+  counters instead of running a full `GROUP BY` on every page load.
+- **Startup prewarm**: the counters are built once when the add-on starts
+  (~1 second), so the first page visit is as fast as every later one.
+- **Incremental updates**: per request only the rows that arrived since the
+  last visit are fetched via a rowid range scan and folded into the counter in
+  Python.
+- **Snapshot via separate `MAX`/`MIN` statements**: checking whether anything
+  changed now uses the primary-key index (fractions of a millisecond) instead
+  of scanning the whole table.
+- **Fast deltas**: counting new rows reads `SELECT group FROM t WHERE pk > ?`
+  and aggregates in Python, avoiding the slow `GROUP BY ... WHERE pk > ?`
+  covering-index scan.
+- **Purge detection**: when rows are deleted, the minimum row id moves up, the
+  counter is rebuilt and the "new" baseline is reset so counts stay correct
+  after a purge as well.
+- **Live-update watch loop sped up**: the change check only runs the fast
+  `MAX`/`MIN` queries, eliminating the "Slow watch check" warnings.
 
 ## 2026.8.2
 
