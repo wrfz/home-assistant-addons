@@ -75,6 +75,51 @@ def test_count_view_signature_detects_purge(tmp_path):
     c.close()
 
 
+def test_get_count_counts_builds_then_delta(tmp_path):
+    path = tmp_path / "watch.db"
+    c = build_db(str(path))
+    seed(c)
+    cdef = app_module.USAGE_SPECS["states_meta"]["counts"][0]
+    state = {}
+    entry = app_module.get_count_counts(c, cdef, state)
+    assert entry["counts"] == {1: 2, 2: 1, 3: 1}
+    assert entry["last_max"] == 4
+
+    # a new row is folded in as a delta, keeping the same entry object
+    c.execute(
+        "INSERT INTO states (entity_id, metadata_id, state, last_updated_ts) VALUES (?,?,?,?)",
+        ("sensor.a", 1, "3.0", 1200.0),
+    )
+    c.commit()
+    entry2 = app_module.get_count_counts(c, cdef, state)
+    assert entry2 is entry
+    assert entry["counts"] == {1: 3, 2: 1, 3: 1}
+    assert entry["last_max"] == 5
+    c.close()
+
+
+def test_get_count_counts_rebuilds_after_purge(tmp_path):
+    path = tmp_path / "watch.db"
+    c = build_db(str(path))
+    seed(c)
+    cdef = app_module.USAGE_SPECS["states_meta"]["counts"][0]
+    state = {}
+    entry = app_module.get_count_counts(c, cdef, state)
+    entry["baseline"] = 4
+    entry["baseline_counts"] = dict(entry["counts"])
+
+    # deleting the oldest rows changes MIN -> full rebuild and baseline reset
+    c.execute("DELETE FROM states WHERE state_id IN (1, 2)")
+    c.commit()
+    entry2 = app_module.get_count_counts(c, cdef, state)
+    assert entry2 is not entry
+    assert entry2["counts"] == {2: 1, 3: 1}
+    assert entry2["last_min"] == 3
+    assert entry2["baseline"] is None
+    assert entry2["baseline_counts"] is None
+    c.close()
+
+
 def test_check_view_changed_first_false_then_true(tmp_path):
     path = tmp_path / "watch.db"
     c = build_db(str(path))

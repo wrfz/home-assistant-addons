@@ -253,33 +253,35 @@ async def test_clean_new_covers_all_usage_tables(client):
     assert "baselines" not in (await r.json())
 
 
-async def test_count_view_served_from_cache_and_invalidated(client, seed_db):
-    # first request builds the cache (including the baseline alias entry)
+async def test_count_view_incremental_state(client, seed_db):
+    # first request establishes the incremental counter and a baseline
     r = await client.get(
         "/api/table/states_meta", params={"counts": "1", "sort": "entity_id", "dir": "asc"}
     )
     assert r.status == 200
     first = await r.json()
-    cache = client.server.app["state"]["counts_cache"]
-    assert cache
+    state = client.server.app["state"]["counts_state"]
+    assert "states" in state
+    entry = state["states"]
+    assert entry["last_max"] == 4
+    assert entry["last_min"] == 1
+    assert entry["counts"] == {1: 2, 2: 1, 3: 1}
+    assert entry["baseline"] == 4
 
-    # second request with unchanged DB is served from the cache (no rebuild)
+    # unchanged DB -> same rows, counter is reused (no rebuild)
     r = await client.get(
         "/api/table/states_meta", params={"counts": "1", "sort": "entity_id", "dir": "asc"}
     )
-    second = await r.json()
-    assert second["rows"] == first["rows"]
-    n = len(cache)
+    assert (await r.json())["rows"] == first["rows"]
 
-    # a page flip on the same view also hits the cache
+    # a page flip on the same view reuses the same incremental state
     r = await client.get(
         "/api/table/states_meta",
         params={"counts": "1", "page": "1", "page_size": "2", "sort": "entity_id", "dir": "asc"},
     )
     assert (await r.json())["total_rows"] == 3
-    assert len(cache) == n
 
-    # a DB change invalidates the freshness signature -> next request rebuilds
+    # new rows are folded in as a delta, not a full rebuild
     conn = sqlite3.connect(seed_db)
     conn.execute(
         "INSERT INTO states (entity_id, metadata_id, state, last_updated_ts) VALUES (?,?,?,?)",
@@ -293,3 +295,5 @@ async def test_count_view_served_from_cache_and_invalidated(client, seed_db):
     )
     data = await r.json()
     assert {row["entity_id"]: row["state_count"] for row in data["rows"]}["sensor.a"] == 3
+    assert state["states"]["counts"][1] == 3
+    assert state["states"]["last_max"] == 5

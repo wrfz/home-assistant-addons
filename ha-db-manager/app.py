@@ -459,54 +459,136 @@ def _count_view_columns(spec):
     return list(spec["base_cols"]) + count_names + ["new_count"]
 
 
-def _count_view_base(spec, since, filter_col=None, filter_value=None, visible=None):
-    """Build the base SELECT of a count view (meta table + aggregated counts).
+def _count_meta_rows(conn, spec, filter_col=None, filter_value=None):
+    """Fetch the (small) meta rows of a count view, optionally filtered.
 
-    Returns (sql, params). Only the columns listed in `visible` are selected
-    (default: every column); count tables whose columns are hidden are not
-    joined at all. The `new_count` column is emitted when it is visible; when
-    `since >= 0` it counts rows added after `since` (per group), otherwise it is
-    0 for every row (nothing is new relative to the current baseline). When
-    `filter_col`/`filter_value` are given the meta rows are restricted to
-    matching values (used when navigating from a child table's foreign key back
-    to its meta row).
+    Returns rows with the spec's base columns (e.g. entity_id, metadata_id).
+    Counts are not joined here; they come from the incremental counters in
+    ``get_count_counts``.
     """
-    count_names = [c["count"] for c in spec["counts"]]
-    base_names = list(spec["base_cols"])
-    if visible is None:
-        visible = base_names + count_names + ["new_count"]
-    selects = [f"t.{db.quote(c)} AS {c}" for c in base_names if c in visible]
-    joins = [f"FROM ({spec['base']}) t"]
+    select = ", ".join(db.quote(c) for c in spec["base_cols"])
+    sql = f"SELECT {select} FROM ({spec['base']}) t"
     params = []
-    where = ""
     if filter_col and filter_value is not None:
-        where = f" WHERE t.{db.quote(filter_col)} = ?"
-    for i, c in enumerate(spec["counts"]):
-        if c["count"] not in visible:
-            continue
-        alias = f"c{i}"
-        selects.append(f"COALESCE({alias}.{c['count']}, 0) AS {c['count']}")
-        joins.append(
-            f"LEFT JOIN (SELECT {c['group']}, COUNT(*) AS {c['count']} "
-            f"FROM {db.quote(c['table'])} GROUP BY {c['group']}) {alias} "
-            f"ON {alias}.{c['group']} = t.{c['group']}"
-        )
-    if "new_count" in visible:
-        if since >= 0:
-            c = spec["counts"][0]
-            selects.append("COALESCE(nc.new_count, 0) AS new_count")
-            joins.append(
-                f"LEFT JOIN (SELECT {c['group']} AS g, COUNT(*) AS new_count "
-                f"FROM {db.quote(c['table'])} "
-                f"WHERE {db.quote(c['pk'])} > ? GROUP BY {c['group']}) nc "
-                f"ON nc.g = t.{c['group']}"
-            )
-            params.append(since)
-        else:
-            selects.append("0 AS new_count")
-    if where:
+        sql += f" WHERE t.{db.quote(filter_col)} = ?"
         params.append(filter_value)
-    return f"SELECT {', '.join(selects)} " + " ".join(joins) + where, params
+    return db.execute(conn, sql, params).fetchall()
+
+
+def count_table_snapshot(conn, cdef):
+    """Current (MAX, MIN) of a count table's primary key (O(1) index lookups)."""
+    row = db.execute(
+        conn,
+        f"SELECT MAX({db.quote(cdef['pk'])}) AS mx, MIN({db.quote(cdef['pk'])}) AS mn "
+        f"FROM {db.quote(cdef['table'])}",
+    ).fetchone()
+    return row["mx"], row["mn"]
+
+
+def _count_table_rebuild(conn, cdef):
+    """Full GROUP BY count of a count table -> {group value: row count}."""
+    res = db.execute(
+        conn,
+        f"SELECT {db.quote(cdef['group'])} AS g, COUNT(*) AS n "
+        f"FROM {db.quote(cdef['table'])} GROUP BY {db.quote(cdef['group'])}",
+    )
+    return {r["g"]: r["n"] for r in res.fetchall()}
+
+
+def _count_table_delta(conn, cdef, last_max):
+    """Counts of rows appended after ``last_max`` -> {group value: row count}."""
+    res = db.execute(
+        conn,
+        f"SELECT {db.quote(cdef['group'])} AS g, COUNT(*) AS n "
+        f"FROM {db.quote(cdef['table'])} "
+        f"WHERE {db.quote(cdef['pk'])} > ? GROUP BY {db.quote(cdef['group'])}",
+        (last_max,),
+    )
+    return {r["g"]: r["n"] for r in res.fetchall()}
+
+
+def get_count_counts(conn, cdef, counts_state, phases=None):
+    """Return the incremental counter entry for a count table.
+
+    The first call (and any call after a purge, detected via a changed MIN pk)
+    runs the full GROUP BY; afterwards only rows appended since the last seen
+    MAX pk are counted again (an index-backed range scan over new rows) and the
+    deltas are folded into the in-memory ``counts`` dict. The entry also tracks
+    the established ``baseline``/``baseline_counts`` used to compute
+    ``new_count`` without touching the table again.
+
+    Purge detection covers HA's ``delete_old_rows`` (removes the oldest rows,
+    so MIN changes). Deleting rows from the middle of the pk range without
+    touching MIN/MAX is not detected and can stale the counters until the next
+    rebuild -- the same scope as the previous per-request signature cache.
+    """
+    if phases:
+        phases.mark(f"pk({cdef['table']})")
+    mx, mn = count_table_snapshot(conn, cdef)
+    entry = counts_state.get(cdef["table"])
+    if entry is None or mn != entry["last_min"]:
+        if phases:
+            phases.mark(f"count({cdef['table']})")
+        entry = {
+            "last_max": mx,
+            "last_min": mn,
+            "counts": _count_table_rebuild(conn, cdef),
+            "baseline": None,
+            "baseline_counts": None,
+        }
+        counts_state[cdef["table"]] = entry
+    elif mx is not None and mx > entry["last_max"]:
+        if phases:
+            phases.mark(f"delta({cdef['table']})")
+        counts = entry["counts"]
+        for g, n in _count_table_delta(conn, cdef, entry["last_max"]).items():
+            counts[g] = counts.get(g, 0) + n
+        entry["last_max"] = mx
+    return entry
+
+
+def _count_new_counts(conn, spec, counts_entry, since):
+    """How to compute ``new_count`` for a count view request.
+
+    Returns ``(mode, extra)``:
+    - mode "zero": ``since < 0`` (the baseline was just established) -> all 0.
+    - mode "diff": ``since`` equals the established baseline -> per group
+      ``current - snapshot`` from the in-memory entry (no DB access).
+    - mode "query": any other ``since`` -> range-scan the first count table for
+      rows with pk > since (correct, used when a client passes a foreign since).
+    """
+    if since < 0:
+        return "zero", None
+    if since == counts_entry["baseline"] and counts_entry["baseline_counts"] is not None:
+        return "diff", None
+    cdef = spec["counts"][0]
+    res = db.execute(
+        conn,
+        f"SELECT {db.quote(cdef['group'])} AS g, COUNT(*) AS n "
+        f"FROM {db.quote(cdef['table'])} "
+        f"WHERE {db.quote(cdef['pk'])} > ? GROUP BY {db.quote(cdef['group'])}",
+        (since,),
+    )
+    return "query", {r["g"]: r["n"] for r in res.fetchall()}
+
+
+def serve_count_rows(rows, columns, sort, sort_dir, page, page_size, default_sort):
+    """Sort and paginate assembled count view rows (pure Python, no DB)."""
+    if sort not in columns:
+        sort = default_sort if default_sort in columns else columns[0]
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "desc"
+    if sort in columns:
+        rows = sorted(
+            rows,
+            key=lambda r: (r.get(sort) is not None, r.get(sort)),
+            reverse=(sort_dir == "desc"),
+        )
+    total_rows = len(rows)
+    offset = (page - 1) * page_size
+    page_rows = rows[offset:offset + page_size]
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    return page_rows, total_pages, total_rows
 
 
 def count_view_signature(conn, table):
@@ -528,51 +610,6 @@ def count_view_signature(conn, table):
         ).fetchone()
         sig.append((row["mx"], row["mn"]))
     return tuple(sig)
-
-
-def build_count_view(conn, spec, since, filter_col=None, filter_value=None,
-                     visible=None, phases=None):
-    """Materialize the full result set of a count view in a single query.
-
-    Returns (columns, rows, total_rows, baseline). Sorting, filtering and
-    pagination are applied in Python on the (small) result set by
-    ``serve_count_view``, so this is only called when the underlying data
-    actually changed (see ``count_view_signature``).
-    """
-    if visible is None:
-        visible = _count_view_columns(spec)
-    first = spec["counts"][0]
-    base, base_params = _count_view_base(spec, since, filter_col, filter_value, visible)
-    if phases:
-        phases.mark(f"select({first['table']})")
-    res = db.execute(conn, f"SELECT * FROM ({base}) AS t", base_params)
-    columns = list(res.columns)
-    rows = res.fetchall()
-    if phases:
-        phases.mark(f"baseline({first['table']})")
-    row = db.execute(
-        conn,
-        f"SELECT MAX({db.quote(first['pk'])}) AS m FROM {db.quote(first['table'])}",
-    ).fetchone()
-    baseline = row["m"] if row and row["m"] is not None else 0
-    return columns, rows, len(rows), baseline
-
-
-def serve_count_view(entry, page, page_size, sort, sort_dir):
-    """Return a paged/sorted slice of a cached count view (pure Python)."""
-    columns = entry["columns"]
-    if sort not in columns:
-        sort = entry["default_sort"] if entry["default_sort"] in columns else columns[0]
-    if sort_dir not in ("asc", "desc"):
-        sort_dir = "desc"
-    rows = entry["rows"]
-    if sort in columns:
-        rows = sorted(rows, key=lambda r: r[sort], reverse=(sort_dir == "desc"))
-    total_rows = len(rows)
-    offset = (page - 1) * page_size
-    page_rows = rows[offset:offset + page_size]
-    total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    return columns, page_rows, total_pages, total_rows, entry["baseline"]
 
 
 async def api_table(request):
@@ -616,45 +653,63 @@ async def api_table(request):
                     since = -1
                     establish = True
             hidden = request.app["state"]["hidden_columns"].get(table_name, set())
-            visible = [c for c in _count_view_columns(spec) if c not in hidden]
+            columns = [c for c in _count_view_columns(spec) if c not in hidden]
             sort = sort or spec["default_sort"]
-            if sort not in visible:
-                sort = spec["default_sort"] if spec["default_sort"] in visible else visible[0]
+            if sort not in columns:
+                sort = spec["default_sort"] if spec["default_sort"] in columns else columns[0]
             if sort_dir not in ("asc", "desc"):
                 sort_dir = "desc"
-            cache = request.app["state"]["counts_cache"]
-            key = (table_name, since, filter_col, filter_value, tuple(visible))
-            entry = cache.get(key)
-            signature = count_view_signature(conn, table_name)
-            if entry is not None and entry["signature"] == signature:
-                phases.mark("cache")
-            else:
-                columns, all_rows, total_rows, baseline = build_count_view(
-                    conn, spec, since, filter_col, filter_value, visible, phases,
-                )
-                entry = {
-                    "signature": signature,
-                    "columns": columns,
-                    "rows": all_rows,
-                    "baseline": baseline,
-                    "default_sort": spec["default_sort"],
-                }
-                cache[key] = entry
-                if len(cache) > 32:
-                    for stale_key in list(cache)[:len(cache) - 32]:
-                        del cache[stale_key]
-            columns, rows, total_pages, total_rows, baseline = serve_count_view(
-                entry, page, page_size, sort, sort_dir,
-            )
+            counts_state = request.app["state"]["counts_state"]
+
+            phases.mark("meta")
+            meta_rows = _count_meta_rows(conn, spec, filter_col, filter_value)
+            entries = [
+                get_count_counts(conn, cdef, counts_state, phases)
+                for cdef in spec["counts"]
+            ]
+
+            counts_entry = entries[0]
+            first = spec["counts"][0]
             if establish:
+                baseline = counts_entry["last_max"]
+                if baseline is None:
+                    baseline = 0
+                counts_entry["baseline"] = baseline
+                counts_entry["baseline_counts"] = dict(counts_entry["counts"])
                 request.app["state"]["baselines"][table_name] = baseline
                 log.info("Established new-baseline %s = %s", table_name, baseline)
-                # The next navigation uses the stored baseline as `since` (a
-                # different cache key). The just-built rows are identical (all
-                # new_count = 0), so alias the entry under that key too.
-                future_key = (table_name, baseline, filter_col, filter_value, tuple(visible))
-                if future_key not in cache:
-                    cache[future_key] = entry
+
+            new_mode, new_extra = _count_new_counts(conn, spec, counts_entry, since)
+
+            rows = []
+            for br in meta_rows:
+                g = br[first["group"]]
+                row = {}
+                for c in spec["base_cols"]:
+                    if c in columns:
+                        row[c] = br[c]
+                for cdef, entry in zip(spec["counts"], entries):
+                    if cdef["count"] in columns:
+                        row[cdef["count"]] = entry["counts"].get(g, 0)
+                if "new_count" in columns:
+                    if new_mode == "diff":
+                        row["new_count"] = max(
+                            0,
+                            counts_entry["counts"].get(g, 0)
+                            - counts_entry["baseline_counts"].get(g, 0),
+                        )
+                    elif new_mode == "query":
+                        row["new_count"] = new_extra.get(g, 0)
+                    else:
+                        row["new_count"] = 0
+                rows.append(row)
+
+            page_rows, total_pages, total_rows = serve_count_rows(
+                rows, columns, sort, sort_dir, page, page_size, spec["default_sort"],
+            )
+            baseline = counts_entry["baseline"]
+            if baseline is None:
+                baseline = counts_entry["last_max"] if counts_entry["last_max"] is not None else 0
             filter_label = (
                 resolve_filter_label(conn, table_name, filter_col, filter_value)
                 if filter_col and filter_value is not None else None
@@ -666,7 +721,7 @@ async def api_table(request):
             "table_name": table_name,
             "counts": True,
             "columns": columns,
-            "rows": rows,
+            "rows": page_rows,
             "page": page,
             "page_size": page_size,
             "total_rows": total_rows,
@@ -676,7 +731,7 @@ async def api_table(request):
         }
         log.info(
             "Count view '%s': %d rows total, returning %d rows | %s",
-            table_name, total_rows, len(rows), phases.render(),
+            table_name, total_rows, len(page_rows), phases.render(),
         )
         return web.Response(
             text=json.dumps(data, cls=SafeEncoder),
@@ -968,6 +1023,11 @@ async def api_clean_new(request):
     app = request.app
     for table_name in USAGE_SPECS:
         app["state"]["baselines"][table_name] = 0
+        cdef = USAGE_SPECS[table_name]["counts"][0]
+        entry = app["state"]["counts_state"].get(cdef["table"])
+        if entry is not None:
+            entry["baseline"] = None
+            entry["baseline_counts"] = None
     log.info("Clean New: baselines reset to 0")
     return web.json_response(settings_payload(app))
 
@@ -1074,6 +1134,36 @@ async def start_watch_loop(app):
     app["watch_task"] = asyncio.get_running_loop().create_task(watch_loop(app))
 
 
+async def prewarm_counts(app):
+    """Pre-build the incremental count counters at startup.
+
+    Runs to completion before the server accepts requests, so the first user
+    request never has to wait for the full GROUP BY over the large history
+    tables (which takes seconds on a big database). Briefly retries while the
+    database is still coming up, then gives up (handlers rebuild on demand).
+    """
+    attempts = 0
+    while True:
+        try:
+            conn = get_db()
+            try:
+                counts_state = app["state"]["counts_state"]
+                for spec in USAGE_SPECS.values():
+                    for cdef in spec["counts"]:
+                        get_count_counts(conn, cdef, counts_state)
+                log.info("Count views prewarmed (%d counters)", len(counts_state))
+                return
+            finally:
+                conn.close()
+        except Exception as e:
+            attempts += 1
+            if attempts >= 12:
+                log.warning("Count prewarm failed after %d attempts, serving without it: %s", attempts, e)
+                return
+            log.warning("Count prewarm attempt %d failed (retrying): %s", attempts, e)
+            await asyncio.sleep(5)
+
+
 @web.middleware
 async def no_cache_middleware(request, handler):
     resp = await handler(request)
@@ -1090,7 +1180,7 @@ def create_app():
         "watches": {},
         "baselines": {},
         "hidden_columns": {},
-        "counts_cache": {},
+        "counts_state": {},
     }
     load_settings(app)
     app.router.add_get("/", index)
@@ -1106,6 +1196,7 @@ def create_app():
     app.router.add_get("/api/table/{table_name}", api_table)
     if not os.environ.get("HA_DISABLE_WATCH_LOOP"):
         app.on_startup.append(start_watch_loop)
+    app.on_startup.append(prewarm_counts)
     return app
 
 
