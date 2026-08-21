@@ -264,7 +264,7 @@
         function tableColumns(meta, data) {
             const links = meta.links || {};
             const virtual = meta.virtual_cols || [];
-            return data.columns.map(key => {
+            const cols = data.columns.map(key => {
                 const link = links[key];
                 const cls = virtual.includes(key) ? 'virtual' : '';
                 if (link) {
@@ -277,6 +277,17 @@
                 }
                 return { key, label: key === 'new_count' ? 'new' : key, cls };
             });
+            if (meta.name === 'statistics_meta') {
+                cols.push({
+                    key: 'chart',
+                    label: 'Graph',
+                    cls: 'virtual',
+                    sortable: false,
+                    protected: true,
+                    render: row => html`<a @click=${() => openChart(row.metadata_id)}>view</a>`
+                });
+            }
+            return cols;
         }
 
         async function showTable(name, page, sortKey, sortDir, filter) {
@@ -367,6 +378,187 @@
             showTable(target, 1, '', '', { col: filterCol, value: filterValue });
         }
 
+        let chartInstance = null;
+        let chartResizeHandler = null;
+
+        function disposeChart() {
+            if (chartResizeHandler) {
+                window.removeEventListener('resize', chartResizeHandler);
+                chartResizeHandler = null;
+            }
+            if (chartInstance) {
+                chartInstance.dispose();
+                chartInstance = null;
+            }
+        }
+
+        function openChart(metadataId) {
+            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter } : null;
+            showChart(metadataId);
+        }
+
+        async function showChart(metadataId, table) {
+            const gen = beginView();
+            stopSettingsRefresh();
+            setCleanNewVisible(false);
+            setViewSpec(null);
+            lastTable = null;
+            const bt = backTo;
+            setBack(bt
+                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter)
+                : showHome);
+            backTo = null;
+
+            document.getElementById('title').textContent = 'Statistics';
+            showLoading();
+            const q = table ? `?table=${encodeURIComponent(table)}` : '';
+            const data = await api(`/api/chart/${encodeURIComponent(metadataId)}${q}`);
+            if (!isCurrentView(gen)) return;
+
+            if (data.error) {
+                setContentHtml(`<div class="info">Error: ${escapeHtml(data.error)}</div>`);
+                return;
+            }
+            document.getElementById('title').textContent = data.statistic_id || `Statistics #${metadataId}`;
+            renderChartView(data);
+        }
+
+        function renderChartView(data) {
+            const el = document.getElementById('content');
+            delete el._$litPart$;
+            el.innerHTML = '';
+            const unit = data.unit ? ` | Unit: ${data.unit}` : '';
+            const resLabel = data.table === 'statistics_short_term' ? 'Short-term (5 min)' : 'Hourly';
+            render(html`
+                <div class="chart-toolbar">
+                    <button class="top-btn" ?disabled=${data.table !== 'statistics_short_term'}
+                            @click=${() => showChart(data.metadata_id, 'statistics_short_term')}>5 min</button>
+                    <button class="top-btn" ?disabled=${data.table !== 'statistics'}
+                            @click=${() => showChart(data.metadata_id, 'statistics')}>Hourly</button>
+                </div>
+                <div class="info">${(data.rows || []).length} rows | ${resLabel}${unit}</div>
+                <div class="chart-container" id="chart"></div>`,
+                el);
+            if (typeof echarts === 'undefined') {
+                debug('echarts library not loaded');
+                setContentHtml('<div class="info">Error: chart library not loaded.</div>');
+                return;
+            }
+            chartInstance = echarts.init(document.getElementById('chart'));
+            chartInstance.setOption(buildChartOption(data));
+            chartResizeHandler = () => { if (chartInstance) chartInstance.resize(); };
+            window.addEventListener('resize', chartResizeHandler);
+        }
+
+        function chartThemeColors() {
+            const css = getComputedStyle(document.documentElement);
+            const get = name => css.getPropertyValue(name).trim();
+            return {
+                accent: get('--app-accent') || '#03a9f4',
+                text: get('--app-text') || '#e0e0e0',
+                textSecondary: get('--app-text-secondary') || '#999',
+                border: get('--app-border') || '#444'
+            };
+        }
+
+        function chartNum(v) {
+            if (v === null || v === undefined || v === '') return null;
+            const n = Number(v);
+            return Number.isFinite(n) ? n : null;
+        }
+
+        function chartAxisLabel(ms) {
+            return new Date(Number(ms)).toLocaleString(undefined, {
+                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        function buildChartOption(data) {
+            const c = chartThemeColors();
+            const rows = data.rows || [];
+            const cats = rows.map(r => String(Math.round(r.start_ts * 1000)));
+            const unit = data.unit ? ` (${data.unit})` : '';
+            const hasCol = name => rows.some(r => r[name] !== null && r[name] !== undefined);
+            const series = [];
+            if (hasCol('sum')) {
+                series.push({
+                    name: 'Sum' + unit,
+                    type: 'bar',
+                    yAxisIndex: 0,
+                    barMaxWidth: 24,
+                    data: rows.map(r => chartNum(r.sum))
+                });
+            }
+            if (hasCol('mean')) {
+                series.push({
+                    name: 'Mean' + unit,
+                    type: 'line',
+                    yAxisIndex: 0,
+                    sampling: 'lttb',
+                    showSymbol: false,
+                    lineStyle: { width: 1.5 },
+                    data: rows.map(r => chartNum(r.mean))
+                });
+            }
+            const stateIdx = series.length > 0 ? 1 : 0;
+            if (hasCol('state')) {
+                series.push({
+                    name: 'State (cumulative)',
+                    type: 'line',
+                    yAxisIndex: stateIdx,
+                    sampling: 'lttb',
+                    showSymbol: false,
+                    lineStyle: { width: 1.5 },
+                    data: rows.map(r => chartNum(r.state))
+                });
+            }
+
+            const yAxes = [{
+                type: 'value', scale: true,
+                axisLabel: { color: c.textSecondary },
+                splitLine: { lineStyle: { color: c.border } }
+            }];
+            if (stateIdx === 1) {
+                yAxes.push({
+                    type: 'value', scale: true,
+                    axisLabel: { color: c.textSecondary },
+                    splitLine: { show: false }
+                });
+            }
+
+            return {
+                backgroundColor: 'transparent',
+                animation: false,
+                legend: { top: 0, textStyle: { color: c.text } },
+                grid: { left: 70, right: stateIdx === 1 ? 70 : 30, top: 40, bottom: 80 },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: params => {
+                        const list = Array.isArray(params) ? params : [params];
+                        if (!list.length) return '';
+                        let out = `<b>${escapeHtml(chartAxisLabel(list[0].name))}</b>`;
+                        for (const p of list) {
+                            const v = p.value === null || p.value === undefined || p.value === '' ? 'NULL' : p.value;
+                            out += `<br/>${p.marker}${escapeHtml(p.seriesName)}: ${v}`;
+                        }
+                        return out;
+                    }
+                },
+                xAxis: {
+                    type: 'category',
+                    data: cats,
+                    axisLabel: { color: c.textSecondary, formatter: chartAxisLabel, hideOverlap: true },
+                    axisLine: { lineStyle: { color: c.border } }
+                },
+                yAxis: yAxes,
+                dataZoom: [
+                    { type: 'inside', start: 0, end: 100 },
+                    { type: 'slider', bottom: 10, height: 24 }
+                ],
+                series
+            };
+        }
+
         function paginationTemplate(data, pageCall) {
             return html`
                 <button @click=${() => pageCall(data.page - 1)} ?disabled=${data.page <= 1}>&laquo; Prev</button>
@@ -379,6 +571,9 @@
             return repeat(data.rows, (row, i) => i, row => {
                 const cells = list.map(c => {
                     const key = typeof c === 'object' ? c.key : c;
+                    if (typeof c === 'object' && c.render) {
+                        return html`<td class=${c.cls ? c.cls : nothing}>${c.render(row)}</td>`;
+                    }
                     const cls = typeof c === 'object' && c.cls ? c.cls : nothing;
                     const val = row[key];
                     const isNull = val === null || val === undefined;
@@ -414,10 +609,10 @@
                     ? () => sortAction(key, isSorted && sort.dir === 'asc' ? 'desc' : 'asc')
                     : undefined;
                 const info = html`<span class="col-info" title="Column info" @click=${e => showColumnInfo(e, tableName, key)}>i</span>`;
-                const hide = protectedCols.includes(key) ? nothing :
+                const hide = (typeof c === 'object' && c.protected) || protectedCols.includes(key) ? nothing :
                     html`<span class="col-hide" title="Hide this column" @click=${e => { e.stopPropagation(); hideColumn(tableName, key); }}>&times;</span>`;
                 const actions = html`<span class="col-actions">${info}${hide}</span>`;
-                return html`<th class="sortable ${cls}" style="cursor:pointer" @click=${sortClick}><span class="th-inner"><span class="col-label">${label}${arrow}</span>${actions}</span></th>`;
+                return html`<th class="${sortClick ? 'sortable' : ''} ${cls}" style=${sortClick ? 'cursor:pointer' : nothing} @click=${sortClick}><span class="th-inner"><span class="col-label">${label}${arrow}</span>${actions}</span></th>`;
             })}</tr>`;
         }
 
@@ -470,6 +665,7 @@
 
         function beginView() {
             removeColumnInfo();
+            disposeChart();
             return ++viewGen;
         }
 

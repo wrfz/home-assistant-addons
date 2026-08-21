@@ -7,7 +7,7 @@ filtering, live updates and usage statistics.
 Works with **SQLite**, **MySQL** and **PostgreSQL**.
 
 ![Add-on category](https://img.shields.io/badge/category-database-informational)
-![Version](https://img.shields.io/badge/version-2026.8.3-blue)
+![Version](https://img.shields.io/badge/version-2026.8.4-blue)
 ![Python](https://img.shields.io/badge/python-3.14-blue)
 
 ## Features
@@ -30,6 +30,9 @@ Works with **SQLite**, **MySQL** and **PostgreSQL**.
   tables.
 - **Column info tooltips**: every column header shows a description of the
   column, including computed (virtual) columns.
+- **Statistics charts**: the `statistics_meta` view has a "Graph" column that
+  opens an interactive Apache ECharts chart of that statistic (sum/mean bars
+  and lines, cumulative state, zoom, hourly and 5-minute resolution).
 - **Theme-aware**: follows the Home Assistant theme; human-readable dates,
   sizes and colors for virtual columns.
 - **Performance diagnostics**: every request logs per-phase timings and every

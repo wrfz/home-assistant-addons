@@ -344,6 +344,7 @@ COLUMN_DESCRIPTIONS = {
         "stat_count": "Anzahl der Statistik-Einträge (Tabelle 'statistics') für diese Statistik. Virtuelle Spalte.",
         "short_stat_count": "Anzahl der Kurzzeit-Statistik-Einträge (Tabelle 'statistics_short_term') für diese Statistik. Virtuelle Spalte.",
         "new_count": "Anzahl der Statistik-Einträge, die seit dem letzten 'Clean New' neu hinzugekommen sind. Virtuelle Spalte.",
+        "chart": "Diagramm-Link: öffnet die Balkengrafik der Statistik-Werte (Stunden- und 5-Minuten-Auflösung). Virtuelle Spalte.",
     },
     "statistics": {
         "id": "Primärschlüssel. Einmalige ID des Statistik-Eintrags.",
@@ -829,6 +830,75 @@ DETAIL_DEFAULT_SORTS = {
     "events": "time_fired_ts",
 }
 
+CHART_VALUE_COLS = ["sum", "mean", "min", "max", "state"]
+
+
+async def api_chart(request):
+    """Time series of one statistic (by statistics_meta.id) for the chart view."""
+    metadata_id = parse_int(request.match_info["metadata_id"], None)
+    if metadata_id is None:
+        return web.json_response({"error": "Invalid metadata_id"}, status=400)
+    table = request.query.get("table", "statistics")
+    if table not in STATS_TABLES:
+        return web.json_response({"error": "Invalid table"}, status=400)
+    limit = parse_int(request.query.get("limit"), None)
+    if limit is not None and limit < 1:
+        return web.json_response({"error": "Invalid limit"}, status=400)
+
+    conn = get_db()
+    try:
+        meta_cols = db.table_columns(conn, "statistics_meta")
+        wanted = ["statistic_id", "unit_of_measurement", "has_mean", "has_sum"]
+        select = ", ".join(db.quote(c) for c in wanted if c in meta_cols)
+        meta_row = db.execute(
+            conn,
+            f"SELECT {select} FROM {db.quote('statistics_meta')} WHERE id = ?",
+            (metadata_id,),
+        ).fetchone()
+        if meta_row is None:
+            return web.json_response({"error": "Statistic not found"}, status=404)
+
+        cols = db.table_columns(conn, table)
+        if "start_ts" not in cols or "metadata_id" not in cols:
+            return web.json_response(
+                {"error": f"Table '{table}' has no start_ts/metadata_id columns"}, status=400
+            )
+        value_cols = [c for c in CHART_VALUE_COLS if c in cols]
+        select_cols = ["start_ts"] + value_cols
+        # with a limit, fetch the most recent rows first, then restore
+        # chronological order below
+        order = "DESC" if limit else "ASC"
+        sql = (
+            f"SELECT {', '.join(db.quote(c) for c in select_cols)} "
+            f"FROM {db.quote(table)} WHERE metadata_id = ? ORDER BY start_ts {order}"
+        )
+        params = [metadata_id]
+        if limit:
+            # fetch the most recent rows, then restore chronological order
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = db.execute(conn, sql, params).fetchall()
+    finally:
+        conn.close()
+    if limit:
+        rows.reverse()
+
+    data = {
+        "table": table,
+        "metadata_id": metadata_id,
+        "statistic_id": meta_row.get("statistic_id"),
+        "unit": meta_row.get("unit_of_measurement"),
+        "has_mean": bool(meta_row.get("has_mean")),
+        "has_sum": bool(meta_row.get("has_sum")),
+        "value_columns": value_cols,
+        "rows": rows,
+    }
+    log.info("Chart '%s' (%s): %d rows", data["statistic_id"], table, len(rows))
+    return web.Response(
+        text=json.dumps(data, cls=SafeEncoder),
+        content_type="application/json",
+    )
+
 
 def max_id(conn, spec):
     table = spec.get("table")
@@ -1213,6 +1283,7 @@ def create_app():
     app.router.add_post("/api/columns/show-all", api_columns_show_all)
     app.router.add_get("/api/tables", api_tables)
     app.router.add_get("/api/table/{table_name}", api_table)
+    app.router.add_get("/api/chart/{metadata_id}", api_chart)
     if not os.environ.get("HA_DISABLE_WATCH_LOOP"):
         app.on_startup.append(start_watch_loop)
     app.on_startup.append(prewarm_counts)

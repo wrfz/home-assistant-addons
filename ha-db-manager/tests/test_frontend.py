@@ -84,7 +84,7 @@ def test_frontend_sort_reloads_in_place():
     assert 'id="title-progress"' in html
     assert "title-progress.hidden" in css
     # the full-content loading spinner must not be used for in-place reloads:
-    reload_body = appjs.split("async function reloadTable(")[1].split("async function showLinked(")[0]
+    reload_body = appjs.split("async function reloadTable(")[1].split("function showLinked(target")[0]
     assert "showLoading()" not in reload_body
 
 
@@ -195,4 +195,34 @@ def test_frontend_column_info_icon():
     assert "flex: 0 0 auto" in css.split("th .col-actions")[1].split("th .col-hide")[0]
     assert ".col-label" in css
     assert "text-overflow: ellipsis" in css.split("th .col-label")[1].split("th .col-actions")[0]
+
+
+def test_frontend_statistics_chart_view():
+    html = HTML.read_text()
+    appjs = APPJS.read_text()
+    css = STYLECSS.read_text()
+    vendor = ROOT / "static" / "vendor" / "echarts" / "echarts.min.js"
+    # echarts is vendored (offline-capable) and loaded before the module script
+    assert vendor.exists() and vendor.stat().st_size > 500_000
+    assert 'src="static/vendor/echarts/echarts.min.js?v=__APP_VERSION__"' in html
+    assert html.index("static/vendor/echarts/echarts.min.js") < html.index('src="static/app.js')
+    # the statistics_meta table gets a synthetic Graph column that opens the chart
+    assert "'statistics_meta'" in appjs
+    assert "key: 'chart'" in appjs
+    assert "openChart(row.metadata_id)" in appjs
+    # rendered cells support custom render functions; protected columns have no hide x
+    assert "c.render(row)" in appjs
+    assert "c.protected" in appjs
+    # the chart view fetches from the dedicated endpoint and guards stale renders
+    assert "/api/chart/" in appjs
+    assert "async function showChart(" in appjs
+    assert "isCurrentView(gen)" in appjs.split("async function showChart(")[1].split("function renderChartView(")[0]
+    # the chart instance is disposed when another view starts and resizes with the window
+    assert "function disposeChart(" in appjs
+    assert "disposeChart();" in appjs.split("function beginView(")[1]
+    assert "chartInstance.resize()" in appjs
+    # bar series for sum, theme colors come from the CSS variables
+    assert "type: 'bar'" in appjs
+    assert "--app-accent" in appjs
+    assert ".chart-container" in css
 

@@ -2,6 +2,18 @@
 
 All notable changes to the Home Assistant DB Manager add-on.
 
+## 2026.8.4
+
+- **Statistics charts**: a new "Graph" column in the `statistics_meta` view
+  opens an Apache ECharts bar chart for that statistic.
+- The chart shows per-period values (`sum` as bars, `mean` as a line) plus
+  the cumulative `state` on a second axis, with a tooltip, mouse/touch zoom
+  and a slider; resolution can be switched between hourly (`statistics`) and
+  5-minute (`statistics_short_term`) data.
+- ECharts is vendored under `static/vendor/echarts/`, so the chart works
+  fully offline inside the ingress; colors follow the app theme via CSS
+  variables.
+
 ## 2026.8.3
 
 - **Count views are now milliseconds-fast**: the count columns of the usage
