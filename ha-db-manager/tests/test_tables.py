@@ -47,7 +47,7 @@ async def test_virtual_cols_metadata(client):
     tables = await r.json()
     by_name = {t["name"]: t for t in tables}
     # computed columns (counts + new) are reported as virtual
-    assert by_name["states_meta"]["virtual_cols"] == ["state_count", "new_count"]
+    assert by_name["states_meta"]["virtual_cols"] == ["state_count", "new_count", "cur_state"]
     assert by_name["statistics_meta"]["virtual_cols"] == ["stat_count", "short_stat_count", "new_count"]
     assert by_name["event_types"]["virtual_cols"] == ["event_count", "new_count"]
     # plain tables have no virtual columns

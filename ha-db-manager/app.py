@@ -176,7 +176,11 @@ USAGE_SPECS = {
             {"table": "states", "pk": "state_id", "group": "metadata_id",
              "count": "state_count"},
         ],
-        "sorts": ["metadata_id", "entity_id", "state_count"],
+        "extras": [
+            {"table": "states", "pk": "state_id", "group": "metadata_id",
+             "cols": {"cur_state": "state"}},
+        ],
+        "sorts": ["metadata_id", "entity_id", "state_count", "cur_state"],
         "default_sort": "entity_id",
         "filter_cols": ["metadata_id", "entity_id"],
         "links": {
@@ -239,7 +243,9 @@ def _virtual_cols(table):
     spec = USAGE_SPECS.get(table)
     if not spec:
         return []
-    return [c["count"] for c in spec["counts"]] + ["new_count"]
+    return [c["count"] for c in spec["counts"]] + ["new_count"] + [
+        col for e in spec.get("extras", []) for col in e["cols"]
+    ]
 
 
 def _count_view_base(spec, since, filter_col=None, filter_value=None):
@@ -279,6 +285,21 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None):
         params.append(since)
     else:
         selects.append("0 AS new_count")
+    for i, e in enumerate(spec.get("extras", [])):
+        alias = f"x{i}"
+        value_cols = ", ".join(
+            f"s.{db.quote(v)} AS {db.quote(c)}" for c, v in e["cols"].items()
+        )
+        joins.append(
+            f"LEFT JOIN (SELECT s.{db.quote(e['group'])} AS g, {value_cols} "
+            f"FROM {db.quote(e['table'])} s "
+            f"JOIN (SELECT {db.quote(e['group'])} AS m, MAX({db.quote(e['pk'])}) AS ms "
+            f"FROM {db.quote(e['table'])} GROUP BY {db.quote(e['group'])}) mm "
+            f"ON s.{db.quote(e['pk'])} = mm.ms AND s.{db.quote(e['group'])} = mm.m "
+            f") {alias} ON {alias}.g = t.{db.quote(e['group'])}"
+        )
+        for col in e["cols"]:
+            selects.append(f"{alias}.{db.quote(col)} AS {db.quote(col)}")
     if where:
         params.append(filter_value)
     return f"SELECT {', '.join(selects)} " + " ".join(joins) + where, params
@@ -294,7 +315,9 @@ def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
     every row when `since < 0`) and sortable. When `filter_col`/`filter_value`
     are given the meta rows are restricted to matching values.
     """
-    sorts = list(spec["sorts"]) + ["new_count"]
+    sorts = list(spec["sorts"]) + ["new_count"] + [
+        col for e in spec.get("extras", []) for col in e["cols"]
+    ]
     if sort not in sorts:
         sort = spec["default_sort"]
     if sort_dir not in ("asc", "desc"):

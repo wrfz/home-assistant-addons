@@ -219,21 +219,24 @@
             return tableFilter ? `'${tableFilter.col}=${tableFilter.value}'` : 'null';
         }
 
+        const COLUMN_LABELS = { new_count: 'new', cur_state: 'current' };
+
         function tableColumns(meta, data) {
             const links = meta.links || {};
                 const virtual = meta.virtual_cols || [];
             return data.columns.map(key => {
                 const link = links[key];
+                const label = COLUMN_LABELS[key] || key;
                 const cls = virtual.includes(key) ? 'virtual' : '';
                 if (link) {
                     return {
                         key,
-                        label: key === 'new_count' ? 'new' : key,
+                        label,
                         cls,
                         click: (v, row) => `showLinked('${link.target}', '${link.filter_col}', '${String(row[link.value_col] ?? '').replace(/'/g, '&#39;')}')`
                     };
                 }
-                return { key, label: key === 'new_count' ? 'new' : key, cls };
+                return { key, label, cls };
             });
         }
 

@@ -15,12 +15,15 @@ async def test_states_usage(client):
     assert data["total_rows"] == 3
     assert data["total_pages"] == 1
     assert data["global_baseline"] == 4
-    assert data["columns"] == ["entity_id", "metadata_id", "state_count", "new_count"]
+    assert data["columns"] == ["entity_id", "metadata_id", "state_count", "new_count", "cur_state"]
     by_id = _rows(data)
     assert by_id["sensor.a"]["state_count"] == 2
     assert by_id["sensor.b"]["state_count"] == 1
     assert by_id["light.c"]["state_count"] == 1
     assert by_id["sensor.a"]["new_count"] == 0
+    assert by_id["sensor.a"]["cur_state"] == "2.0"
+    assert by_id["sensor.b"]["cur_state"] == "off"
+    assert by_id["light.c"]["cur_state"] == "on"
 
 
 async def test_states_usage_paged(client):
@@ -52,6 +55,16 @@ async def test_states_usage_sorted_by_new_count(client):
     r = await client.get("/api/table/states_meta", params={"counts": "1", "since": "0", "sort": "new_count", "dir": "asc"})
     data = await r.json()
     assert data["rows"][-1]["entity_id"] == "sensor.a"
+
+
+async def test_states_usage_sorted_by_cur_state(client):
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "sort": "cur_state", "dir": "asc"})
+    data = await r.json()
+    assert [row["cur_state"] for row in data["rows"]] == ["2.0", "off", "on"]
+
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "sort": "cur_state", "dir": "desc"})
+    data = await r.json()
+    assert [row["cur_state"] for row in data["rows"]] == ["on", "off", "2.0"]
 
 
 async def test_states_usage_with_since(client, seed_db):
