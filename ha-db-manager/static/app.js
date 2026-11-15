@@ -633,7 +633,7 @@
             render(html`
                 <div class="info" id="info-el">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>
                 <div class="pagination" id="pag-top">${paginationTemplate(data, pageCall)}</div>
-                <div class="table-search"><input id="table-search" type="text" autocomplete="off" placeholder="Search…" oninput="onSearchInput()" onkeydown="onSearchKey(event)">
+                <div class="table-search"><input id="table-search" type="text" autocomplete="off" placeholder="Search…" @input=${onSearchInput} @keydown=${onSearchKey}>
                     <button class="search-clear" title="Clear search" @click=${clearTableSearch}>&times;</button></div>
                 <div class="container"><table>
                     <thead id="thead-el">${buildThead(data, sort, sortAction, cols)}</thead>
