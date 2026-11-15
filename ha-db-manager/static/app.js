@@ -245,6 +245,7 @@
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (counts) qs.set('counts', '1');
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
+            if (tableSearchState) qs.set('search', tableSearchState);
             if (tableFilter) {
                 qs.set('filter_col', tableFilter.col);
                 qs.set('filter_value', tableFilter.value);
@@ -261,21 +262,28 @@
             return null;
         }
 
+        function filterQueryString() {
+            return tableFilter ? `'${tableFilter.col}=${tableFilter.value}'` : 'null';
+        }
+
+        const COLUMN_LABELS = { new_count: 'new', cur_state: 'current' };
+
         function tableColumns(meta, data) {
             const links = meta.links || {};
             const virtual = meta.virtual_cols || [];
             const cols = data.columns.map(key => {
                 const link = links[key];
+                const label = COLUMN_LABELS[key] || key;
                 const cls = virtual.includes(key) ? 'virtual' : '';
                 if (link) {
                     return {
                         key,
-                        label: key === 'new_count' ? 'new' : key,
+                        label,
                         cls,
                         click: row => showLinked(link.target, link.filter_col, String(row[link.value_col] ?? ''))
                     };
                 }
-                return { key, label: key === 'new_count' ? 'new' : key, cls };
+                return { key, label, cls };
             });
             if (meta.name === 'statistics_meta') {
                 cols.push({
@@ -301,6 +309,8 @@
             const f = normalizeFilter(filter);
             tableFilter = f;
             backTo = null;
+            tableSearchState = '';
+            clearTimeout(searchTimer);
 
             const meta = tableMeta(name);
             const counts = !!meta.counts;
@@ -623,17 +633,62 @@
             render(html`
                 <div class="info" id="info-el">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>
                 <div class="pagination" id="pag-top">${paginationTemplate(data, pageCall)}</div>
+                <div class="table-search"><input id="table-search" type="text" autocomplete="off" placeholder="Search…" oninput="onSearchInput()" onkeydown="onSearchKey(event)">
+                    <button class="search-clear" title="Clear search" @click=${clearTableSearch}>&times;</button></div>
                 <div class="container"><table>
                     <thead id="thead-el">${buildThead(data, sort, sortAction, cols)}</thead>
                     <tbody id="tbody-el">${buildRows(data, cols)}</tbody>
                 </table></div>
                 <div class="pagination" id="pag-bottom">${paginationTemplate(data, pageCall)}</div>`,
                 el);
+            const si = document.getElementById('table-search');
+            if (si) si.value = tableSearchState;
+            syncSearchWidth();
         }
 
         function renderTablePage(data, pageCall, sort, sortAction, silentFetch, colsFn) {
             lastTable = { data, pageCall, sort, sortAction, silentFetch, colsFn };
             renderTableView(data, pageCall, sort, sortAction, silentFetch, colsFn);
+        }
+
+        function syncSearchWidth() {
+            const cell = document.querySelector('#tbody-el tr:first-child td:first-child') ||
+                document.querySelector('#thead-el th:first-child');
+            const inp = document.getElementById('table-search');
+            if (cell && inp) inp.style.width = cell.offsetWidth + 'px';
+        }
+
+        let tableSearchState = '';
+        let searchTimer = null;
+
+        function onSearchInput() {
+            const inp = document.getElementById('table-search');
+            tableSearchState = inp ? inp.value : '';
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(triggerSearchReload, 350);
+        }
+
+        function onSearchKey(ev) {
+            if (ev.key !== 'Escape') return;
+            ev.preventDefault();
+            clearTableSearch();
+        }
+
+        function triggerSearchReload() {
+            if (!lastTable) return;
+            const name = lastTable.data.table_name;
+            const sk = lastTable.sort && lastTable.sort.key || '';
+            const sd = lastTable.sort && lastTable.sort.dir || '';
+            reloadTable(name, 1, sk, sd, filterQueryString());
+        }
+
+        function clearTableSearch() {
+            const inp = document.getElementById('table-search');
+            if (!inp || !inp.value) return;
+            inp.value = '';
+            tableSearchState = '';
+            clearTimeout(searchTimer);
+            triggerSearchReload();
         }
 
         function updateTableInPlace(data, pageCall) {

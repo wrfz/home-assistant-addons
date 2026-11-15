@@ -224,7 +224,11 @@ USAGE_SPECS = {
             {"table": "states", "pk": "state_id", "group": "metadata_id",
              "count": "state_count"},
         ],
-        "sorts": ["metadata_id", "entity_id", "state_count"],
+        "extras": [
+            {"table": "states", "pk": "state_id", "group": "metadata_id",
+             "cols": {"cur_state": "state"}},
+        ],
+        "sorts": ["metadata_id", "entity_id", "state_count", "cur_state"],
         "default_sort": "entity_id",
         "filter_cols": ["metadata_id", "entity_id"],
         "links": {
@@ -275,6 +279,7 @@ COLUMN_DESCRIPTIONS = {
         "entity_id": "Entitäts-ID im Format 'domain.object_id', z.B. 'sensor.temperatur'. Verknüpfung (Link): Klick öffnet die Zustandshistorie der Entität.",
         "state_count": "Anzahl der gespeicherten Zustände (Zeilen in 'states') für diese Entität. Wird von der App berechnet (virtuelle Spalte).",
         "new_count": "Anzahl der Zustände, die seit dem letzten 'Clean New' neu hinzugekommen sind. Wird von der App berechnet (virtuelle Spalte).",
+        "cur_state": "Der aktuelle Zustandswert der Entität (der letzte gespeicherte Zustand). Wird von der App berechnet (virtuelle Spalte).",
     },
     "states": {
         "state_id": "Primärschlüssel. Fortlaufende, einmalige ID pro gespeichertem Zustand.",
@@ -434,7 +439,9 @@ def _virtual_cols(table):
     spec = USAGE_SPECS.get(table)
     if not spec:
         return []
-    return [c["count"] for c in spec["counts"]] + ["new_count"]
+    return [c["count"] for c in spec["counts"]] + ["new_count"] + [
+        col for e in spec.get("extras", []) for col in e["cols"]
+    ]
 
 
 def _protected_columns(table):
@@ -457,7 +464,59 @@ def _protected_columns(table):
 def _count_view_columns(spec):
     """All columns a count view can produce (base + count names + new_count)."""
     count_names = [c["count"] for c in spec["counts"]]
-    return list(spec["base_cols"]) + count_names + ["new_count"]
+    return (
+        list(spec["base_cols"]) + count_names + ["new_count"]
+        + [col for e in spec.get("extras", []) for col in e["cols"]]
+    )
+
+
+def _search_fragment(cols, term):
+    """Build a substring search clause over the given columns.
+
+    Returns (fragment, params) where fragment is an OR of LIKE conditions
+    (ILIKE for Postgres, whose LIKE is case-sensitive) or ("", []) when there
+    is nothing to search. % and _ in the term are escaped literally.
+    """
+    if not cols or not term:
+        return "", []
+    pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    kind = db.get_backend().kind
+    cast = "CHAR" if kind == "mysql" else "TEXT"
+    op = "ILIKE" if kind == "postgres" else "LIKE"
+    parts = [f"CAST({db.quote(c)} AS {cast}) {op} ? ESCAPE '\\'" for c in cols]
+    return "(" + " OR ".join(parts) + ")", [pattern] * len(cols)
+
+
+def _search_cols(table_cols, hidden):
+    """Columns a table search should cover: all visible table columns."""
+    return [c for c in table_cols if c not in hidden]
+
+
+def _count_view_extras(conn, spec, phases=None):
+    """Latest row values of the spec's extras tables.
+
+    Returns {group value: {col: value}}. Each extras table is joined to its
+    own MAX(pk) aggregate, so SQLite answers via the rowid b-tree instead of
+    scanning the history table.
+    """
+    out = {}
+    for e in spec.get("extras", []):
+        if phases:
+            phases.mark(f"extras({e['table']})")
+        value_cols = ", ".join(
+            f"s.{db.quote(v)} AS {db.quote(c)}" for c, v in e["cols"].items()
+        )
+        res = db.execute(
+            conn,
+            f"SELECT s.{db.quote(e['group'])} AS g, {value_cols} "
+            f"FROM {db.quote(e['table'])} s "
+            f"JOIN (SELECT {db.quote(e['group'])} AS m, MAX({db.quote(e['pk'])}) AS ms "
+            f"FROM {db.quote(e['table'])} GROUP BY {db.quote(e['group'])}) mm "
+            f"ON s.{db.quote(e['pk'])} = mm.ms AND s.{db.quote(e['group'])} = mm.m"
+        )
+        for r in res.fetchall():
+            out[r["g"]] = {c: r[c] for c in e["cols"]}
+    return out
 
 
 def _count_meta_rows(conn, spec, filter_col=None, filter_value=None):
@@ -644,6 +703,7 @@ async def api_table(request):
     if sort_dir is None:
         sort_dir = "desc" if filter_col and filter_value is not None else "asc"
     since = parse_int(request.query.get("since"), -1)
+    search = request.query.get("search", "").strip()
 
     log.info(
         "Viewing table '%s' (page %d, page_size %d, sort=%s %s, counts=%s, "
@@ -701,6 +761,12 @@ async def api_table(request):
 
             new_mode, new_extra = _count_new_counts(conn, spec, counts_entry, since)
 
+            extra_cols = [c for e in spec.get("extras", []) for c in e["cols"]]
+            extras = (
+                _count_view_extras(conn, spec, phases)
+                if any(c in columns for c in extra_cols) else {}
+            )
+
             rows = []
             for br in meta_rows:
                 g = br[first["group"]]
@@ -722,7 +788,18 @@ async def api_table(request):
                         row["new_count"] = new_extra.get(g, 0)
                     else:
                         row["new_count"] = 0
+                for e in spec.get("extras", []):
+                    for col in e["cols"]:
+                        if col in columns:
+                            row[col] = (extras.get(g) or {}).get(col)
                 rows.append(row)
+
+            if search:
+                needle = search.lower()
+                rows = [
+                    r for r in rows
+                    if any(needle in str(v).lower() for v in r.values() if v is not None)
+                ]
 
             page_rows, total_pages, total_rows = serve_count_rows(
                 rows, columns, sort, sort_dir, page, page_size, spec["default_sort"],
@@ -769,20 +846,25 @@ async def api_table(request):
     hidden = request.app["state"]["hidden_columns"].get(table_name, set())
     visible = [c for c in sorted(table_cols) if c not in hidden]
     try:
+        where_parts = []
+        where_params = []
         if filter_col and filter_value is not None:
             if filter_col not in table_cols:
                 return web.json_response({"error": "Invalid filter column"}, status=400)
-            columns, rows, total_pages, total_rows = query_paged(
-                conn, table_name,
-                f" WHERE {db.quote(filter_col)} = ?", [filter_value],
-                page, page_size, sort, sort_dir, DETAIL_DEFAULT_SORTS.get(table_name),
-                visible, phases,
-            )
-        else:
-            columns, rows, total_pages, total_rows = query_paged(
-                conn, table_name, "", [], page, page_size, sort, sort_dir, None,
-                visible, phases,
-            )
+            where_parts.append(f"{db.quote(filter_col)} = ?")
+            where_params.append(filter_value)
+        if search:
+            frag, frag_params = _search_fragment(_search_cols(table_cols, hidden), search)
+            if frag:
+                where_parts.append(frag)
+                where_params.extend(frag_params)
+        where = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        columns, rows, total_pages, total_rows = query_paged(
+            conn, table_name, where, where_params,
+            page, page_size, sort, sort_dir,
+            DETAIL_DEFAULT_SORTS.get(table_name) if filter_col and filter_value is not None else None,
+            visible, phases,
+        )
     except KeyError:
         conn.close()
         log.warning("Table '%s' not found", table_name)
@@ -898,6 +980,28 @@ async def api_chart(request):
         text=json.dumps(data, cls=SafeEncoder),
         content_type="application/json",
     )
+
+
+def _search_fragment(cols, term):
+    """Build a substring search clause over the given columns.
+
+    Returns (fragment, params) where fragment is an OR of LIKE conditions
+    (ILIKE for Postgres, whose LIKE is case-sensitive) or ("", []) when there
+    is nothing to search. % and _ in the term are escaped literally.
+    """
+    if not cols or not term:
+        return "", []
+    pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    kind = db.get_backend().kind
+    cast = "CHAR" if kind == "mysql" else "TEXT"
+    op = "ILIKE" if kind == "postgres" else "LIKE"
+    parts = [f"CAST({db.quote(c)} AS {cast}) {op} ? ESCAPE '\\'" for c in cols]
+    return "(" + " OR ".join(parts) + ")", [pattern] * len(cols)
+
+
+def _search_cols(table_cols, hidden):
+    """Columns a table search should cover: all visible table columns."""
+    return [c for c in table_cols if c not in hidden]
 
 
 def max_id(conn, spec):

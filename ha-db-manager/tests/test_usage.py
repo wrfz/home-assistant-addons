@@ -15,12 +15,15 @@ async def test_states_usage(client):
     assert data["total_rows"] == 3
     assert data["total_pages"] == 1
     assert data["global_baseline"] == 4
-    assert data["columns"] == ["entity_id", "metadata_id", "state_count", "new_count"]
+    assert data["columns"] == ["entity_id", "metadata_id", "state_count", "new_count", "cur_state"]
     by_id = _rows(data)
     assert by_id["sensor.a"]["state_count"] == 2
     assert by_id["sensor.b"]["state_count"] == 1
     assert by_id["light.c"]["state_count"] == 1
     assert by_id["sensor.a"]["new_count"] == 0
+    assert by_id["sensor.a"]["cur_state"] == "2.0"
+    assert by_id["sensor.b"]["cur_state"] == "off"
+    assert by_id["light.c"]["cur_state"] == "on"
 
 
 async def test_states_usage_paged(client):
@@ -52,6 +55,16 @@ async def test_states_usage_sorted_by_new_count(client):
     r = await client.get("/api/table/states_meta", params={"counts": "1", "since": "0", "sort": "new_count", "dir": "asc"})
     data = await r.json()
     assert data["rows"][-1]["entity_id"] == "sensor.a"
+
+
+async def test_states_usage_sorted_by_cur_state(client):
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "sort": "cur_state", "dir": "asc"})
+    data = await r.json()
+    assert [row["cur_state"] for row in data["rows"]] == ["2.0", "off", "on"]
+
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "sort": "cur_state", "dir": "desc"})
+    data = await r.json()
+    assert [row["cur_state"] for row in data["rows"]] == ["on", "off", "2.0"]
 
 
 async def test_states_usage_with_since(client, seed_db):
@@ -297,3 +310,60 @@ async def test_count_view_incremental_state(client, seed_db):
     assert {row["entity_id"]: row["state_count"] for row in data["rows"]}["sensor.a"] == 3
     assert state["states"]["counts"][1] == 3
     assert state["states"]["last_max"] == 5
+
+
+async def test_search_filters_table_server_side(client):
+    # state '2.0' exists in one row of states; the match must be found
+    # server-side (independent of pagination window)
+    r = await client.get("/api/table/states", params={"search": "2.0", "page": "1", "page_size": "1"})
+    data = await r.json()
+    assert data["total_rows"] == 1
+    assert data["total_pages"] == 1
+    assert data["rows"][0]["state"] == "2.0"
+
+
+async def test_search_is_case_insensitive(client):
+    r = await client.get("/api/table/states", params={"search": "LIGHT", "page": "1", "page_size": "2"})
+    data = await r.json()
+    assert data["total_rows"] == 1
+    assert data["rows"][0]["entity_id"] == "light.c"
+
+
+async def test_search_spans_all_visible_columns(client):
+    # matches entity_id (3 rows) even though the value only lives there
+    r = await client.get("/api/table/states", params={"search": "sensor"})
+    data = await r.json()
+    assert data["total_rows"] == 3
+
+
+async def test_search_paged_across_pages(client):
+    r = await client.get(
+        "/api/table/states", params={"search": "sensor", "page": "2", "page_size": "2"}
+    )
+    data = await r.json()
+    assert data["total_rows"] == 3
+    assert data["page"] == 2
+    assert len(data["rows"]) == 1
+
+
+async def test_search_excludes_hidden_columns(client):
+    r = await client.post("/api/columns/hide", json={"table": "states", "column": "state"})
+    assert r.status == 200
+    # 'off' only exists in the (now hidden) state column
+    r = await client.get("/api/table/states", params={"search": "off"})
+    data = await r.json()
+    assert data["total_rows"] == 0
+
+
+async def test_search_filters_count_view(client):
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "search": "sensor"})
+    data = await r.json()
+    assert data["total_rows"] == 2
+    assert {row["entity_id"] for row in data["rows"]} == {"sensor.a", "sensor.b"}
+
+
+async def test_search_count_view_matches_cur_state(client):
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "search": "off"})
+    data = await r.json()
+    assert data["total_rows"] == 1
+    assert data["rows"][0]["entity_id"] == "sensor.b"
