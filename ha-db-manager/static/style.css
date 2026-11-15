@@ -69,6 +69,22 @@ tr:hover { background: var(--app-card-bg-hover); }
 .pagination button:disabled { opacity: 0.4; cursor: default; }
 .pagination span { padding: 0.4rem 0.8rem; border-radius: 4px; background: var(--app-accent); color: var(--app-accent-text); }
 .container { overflow-x: auto; }
+.table-search {
+    position: relative; display: inline-flex; align-items: center; margin-bottom: 1rem;
+}
+.table-search input {
+    padding: 0.45rem 2.2rem 0.45rem 0.6rem; border-radius: 6px; box-sizing: border-box;
+    background: var(--app-card-bg); border: 1px solid var(--app-border-strong);
+    color: var(--app-text); font-size: 0.9rem; outline: none;
+}
+.table-search input:focus { border-color: var(--app-accent); }
+.search-clear {
+    position: absolute; right: 0.45rem; line-height: 1; padding: 0.15rem 0.4rem;
+    background: transparent; border: none; color: var(--app-text-secondary);
+    font-size: 1.1rem; cursor: pointer; display: none;
+}
+.table-search input:not(:placeholder-shown) ~ .search-clear { display: block; }
+.search-clear:hover { color: var(--app-accent); }
 .settings { max-width: 40rem; padding: 0.5rem 0; }
 .settings-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .settings-row label { font-weight: bold; }

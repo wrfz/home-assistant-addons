@@ -306,7 +306,8 @@ def _count_view_base(spec, since, filter_col=None, filter_value=None):
 
 
 def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
-                     filter_col=None, filter_value=None):
+                     filter_col=None, filter_value=None, *, search=None,
+                     search_cols=None):
     """Run a paged count view for a meta table (see USAGE_SPECS).
 
     Returns (columns, rows, total_pages, total_rows, baseline) where baseline is
@@ -323,15 +324,18 @@ def count_view_paged(conn, spec, page, page_size, sort, sort_dir, since,
     if sort_dir not in ("asc", "desc"):
         sort_dir = "desc"
     base, base_params = _count_view_base(spec, since, filter_col, filter_value)
+    search_sql, search_params = _search_fragment(search_cols, search)
+    if search_sql:
+        search_sql = f" WHERE {search_sql}"
     total_rows = db.execute(
-        conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t", base_params
+        conn, f"SELECT COUNT(*) AS c FROM ({base}) AS t{search_sql}", base_params + search_params
     ).fetchone()["c"]
     offset = (page - 1) * page_size
     res = db.execute(
         conn,
-        f"SELECT * FROM ({base}) AS t "
+        f"SELECT * FROM ({base}) AS t{search_sql} "
         f"ORDER BY {db.quote(sort)} {sort_dir.upper()} LIMIT ? OFFSET ?",
-        base_params + [page_size, offset],
+        base_params + search_params + [page_size, offset],
     )
     columns = list(res.columns)
     rows = res.fetchall()
@@ -357,6 +361,7 @@ async def api_table(request):
     if sort_dir is None:
         sort_dir = "desc" if filter_col and filter_value is not None else "asc"
     since = parse_int(request.query.get("since"), -1)
+    search = request.query.get("search", "").strip()
 
     log.info(
         "Viewing table '%s' (page %d, page_size %d, sort=%s %s, counts=%s, "
@@ -385,6 +390,8 @@ async def api_table(request):
             columns, rows, total_pages, total_rows, baseline = count_view_paged(
                 conn, spec, page, page_size, sort or spec["default_sort"], sort_dir, since,
                 filter_col, filter_value,
+                search=search,
+                search_cols=_count_view_search_cols(request.app, table_name, conn, spec) if search else None,
             )
             columns = _visible_columns(request.app, table_name, columns)
             if establish:
@@ -421,18 +428,25 @@ async def api_table(request):
         conn.close()
         return web.json_response({"error": "Table not found"}, status=404)
     try:
+        where_parts = []
+        where_params = []
         if filter_col and filter_value is not None:
             if filter_col not in table_cols:
                 return web.json_response({"error": "Invalid filter column"}, status=400)
-            columns, rows, total_pages, total_rows = query_paged(
-                conn, table_name,
-                f" WHERE {db.quote(filter_col)} = ?", [filter_value],
-                page, page_size, sort, sort_dir, DETAIL_DEFAULT_SORTS.get(table_name),
-            )
-        else:
-            columns, rows, total_pages, total_rows = query_paged(
-                conn, table_name, "", [], page, page_size, sort, sort_dir, None
-            )
+            where_parts.append(f"{db.quote(filter_col)} = ?")
+            where_params.append(filter_value)
+        if search:
+            hidden = request.app["state"]["hidden_columns"].get(table_name, set())
+            frag, frag_params = _search_fragment(_search_cols(table_cols, hidden), search)
+            if frag:
+                where_parts.append(frag)
+                where_params.extend(frag_params)
+        where = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        columns, rows, total_pages, total_rows = query_paged(
+            conn, table_name, where, where_params,
+            page, page_size, sort, sort_dir,
+            DETAIL_DEFAULT_SORTS.get(table_name) if filter_col and filter_value is not None else None,
+        )
     except KeyError:
         conn.close()
         log.warning("Table '%s' not found", table_name)
@@ -483,6 +497,41 @@ def _visible_columns(app, table_name, columns):
     if not hidden:
         return columns
     return [c for c in columns if c not in hidden]
+
+
+def _search_fragment(cols, term):
+    """Build a substring search clause over the given columns.
+
+    Returns (fragment, params) where fragment is an OR of LIKE conditions
+    (ILIKE for Postgres, whose LIKE is case-sensitive) or ("", []) when there
+    is nothing to search. % and _ in the term are escaped literally.
+    """
+    if not cols or not term:
+        return "", []
+    pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    kind = db.get_backend().kind
+    cast = "CHAR" if kind == "mysql" else "TEXT"
+    op = "ILIKE" if kind == "postgres" else "LIKE"
+    parts = [f"CAST({db.quote(c)} AS {cast}) {op} ? ESCAPE '\\'" for c in cols]
+    return "(" + " OR ".join(parts) + ")", [pattern] * len(cols)
+
+
+def _search_cols(table_cols, hidden):
+    """Columns a table search should cover: all visible table columns."""
+    return [c for c in table_cols if c not in hidden]
+
+
+def _count_view_search_cols(app, table_name, conn, spec):
+    """Visible columns of a count view that a search should cover."""
+    meta_cols = db.execute(conn, f"SELECT * FROM ({spec['base']}) LIMIT 0").columns
+    final = (
+        list(meta_cols)
+        + [c["count"] for c in spec["counts"]]
+        + ["new_count"]
+        + [col for e in spec.get("extras", []) for col in e["cols"]]
+    )
+    hidden = app["state"]["hidden_columns"].get(table_name, set())
+    return [c for c in final if c not in hidden]
 
 
 def max_id(conn, spec):

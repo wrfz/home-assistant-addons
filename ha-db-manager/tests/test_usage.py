@@ -264,3 +264,60 @@ async def test_clean_new_covers_all_usage_tables(client):
     assert r.status == 200
     # no persistence side effects: settings file stays baseline-free
     assert "baselines" not in (await r.json())
+
+
+async def test_search_filters_table_server_side(client):
+    # state '2.0' exists in one row of states; the match must be found
+    # server-side (independent of pagination window)
+    r = await client.get("/api/table/states", params={"search": "2.0", "page": "1", "page_size": "1"})
+    data = await r.json()
+    assert data["total_rows"] == 1
+    assert data["total_pages"] == 1
+    assert data["rows"][0]["state"] == "2.0"
+
+
+async def test_search_is_case_insensitive(client):
+    r = await client.get("/api/table/states", params={"search": "LIGHT", "page": "1", "page_size": "2"})
+    data = await r.json()
+    assert data["total_rows"] == 1
+    assert data["rows"][0]["entity_id"] == "light.c"
+
+
+async def test_search_spans_all_visible_columns(client):
+    # matches entity_id (3 rows) even though the value only lives there
+    r = await client.get("/api/table/states", params={"search": "sensor"})
+    data = await r.json()
+    assert data["total_rows"] == 3
+
+
+async def test_search_paged_across_pages(client):
+    r = await client.get(
+        "/api/table/states", params={"search": "sensor", "page": "2", "page_size": "2"}
+    )
+    data = await r.json()
+    assert data["total_rows"] == 3
+    assert data["page"] == 2
+    assert len(data["rows"]) == 1
+
+
+async def test_search_excludes_hidden_columns(client):
+    r = await client.post("/api/columns/hide", json={"table": "states", "column": "state"})
+    assert r.status == 200
+    # 'off' only exists in the (now hidden) state column
+    r = await client.get("/api/table/states", params={"search": "off"})
+    data = await r.json()
+    assert data["total_rows"] == 0
+
+
+async def test_search_filters_count_view(client):
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "search": "sensor"})
+    data = await r.json()
+    assert data["total_rows"] == 2
+    assert {row["entity_id"] for row in data["rows"]} == {"sensor.a", "sensor.b"}
+
+
+async def test_search_count_view_matches_cur_state(client):
+    r = await client.get("/api/table/states_meta", params={"counts": "1", "search": "off"})
+    data = await r.json()
+    assert data["total_rows"] == 1
+    assert data["rows"][0]["entity_id"] == "sensor.b"

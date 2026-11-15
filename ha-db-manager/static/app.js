@@ -199,6 +199,7 @@
             const qs = new URLSearchParams({ page, page_size: 100 });
             if (counts) qs.set('counts', '1');
             if (sortKey && sortDir) { qs.set('sort', sortKey); qs.set('dir', sortDir); }
+            if (tableSearchState) qs.set('search', tableSearchState);
             if (tableFilter) {
                 qs.set('filter_col', tableFilter.col);
                 qs.set('filter_value', tableFilter.value);
@@ -251,6 +252,8 @@
             const f = normalizeFilter(filter);
             tableFilter = f;
             backTo = null;
+            tableSearchState = '';
+            clearTimeout(searchTimer);
 
             const meta = tableMeta(name);
             const counts = !!meta.counts;
@@ -379,9 +382,54 @@
             document.getElementById('content').innerHTML =
                 `<div class="info" id="info-el">${data.total_rows} rows total | Page ${data.page} of ${data.total_pages}</div>` +
                 `<div class="pagination" id="pag-top">${paginationHtml(data, pageCall)}</div>` +
+                '<div class="table-search"><input id="table-search" type="text" autocomplete="off" placeholder="Search…" oninput="onSearchInput()" onkeydown="onSearchKey(event)">' +
+                '<button class="search-clear" title="Clear search" onclick="clearTableSearch()">&times;</button></div>' +
                 '<div class="container"><table><thead id="thead-el">' + buildThead(data, sort, sortAction, cols) + '</thead>' +
                 '<tbody id="tbody-el">' + buildRows(data, cols) + '</tbody></table></div>' +
                 `<div class="pagination" id="pag-bottom">${paginationHtml(data, pageCall)}</div>`;
+            const si = document.getElementById('table-search');
+            if (si && tableSearchState) si.value = tableSearchState;
+            syncSearchWidth();
+        }
+
+        function syncSearchWidth() {
+            const cell = document.querySelector('#tbody-el tr:first-child td:first-child') ||
+                document.querySelector('#thead-el th:first-child');
+            const inp = document.getElementById('table-search');
+            if (cell && inp) inp.style.width = cell.offsetWidth + 'px';
+        }
+
+        let tableSearchState = '';
+        let searchTimer = null;
+
+        function onSearchInput() {
+            const inp = document.getElementById('table-search');
+            tableSearchState = inp ? inp.value : '';
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(triggerSearchReload, 350);
+        }
+
+        function onSearchKey(ev) {
+            if (ev.key !== 'Escape') return;
+            ev.preventDefault();
+            clearTableSearch();
+        }
+
+        function triggerSearchReload() {
+            if (!lastTable) return;
+            const name = lastTable.data.table_name;
+            const sk = lastTable.sort && lastTable.sort.key || '';
+            const sd = lastTable.sort && lastTable.sort.dir || '';
+            reloadTable(name, 1, sk, sd, filterQueryString());
+        }
+
+        function clearTableSearch() {
+            const inp = document.getElementById('table-search');
+            if (!inp || !inp.value) return;
+            inp.value = '';
+            tableSearchState = '';
+            clearTimeout(searchTimer);
+            triggerSearchReload();
         }
 
         function updateTableInPlace(data, pageCall) {
@@ -396,6 +444,7 @@
             document.getElementById('pag-bottom').innerHTML = pag;
             document.getElementById('thead-el').innerHTML = buildThead(data, lastTable.sort, lastTable.sortAction, cols);
             document.getElementById('tbody-el').innerHTML = buildRows(data, cols);
+            syncSearchWidth();
         }
 
         async function silentReload() {
