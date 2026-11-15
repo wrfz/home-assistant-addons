@@ -226,6 +226,7 @@ USAGE_SPECS = {
         ],
         "extras": [
             {"table": "states", "pk": "state_id", "group": "metadata_id",
+             "order": ["last_updated_ts", "state_id"],
              "cols": {"cur_state": "state"}},
         ],
         "sorts": ["metadata_id", "entity_id", "state_count", "cur_state"],
@@ -492,30 +493,34 @@ def _search_cols(table_cols, hidden):
     return [c for c in table_cols if c not in hidden]
 
 
-def _count_view_extras(conn, spec, phases=None):
-    """Latest row values of the spec's extras tables.
+def _count_view_extras(conn, spec, phases=None, groups=()):
+    """Latest row values of the spec's extras tables, keyed by group.
 
-    Returns {group value: {col: value}}. Each extras table is joined to its
-    own MAX(pk) aggregate, so SQLite answers via the rowid b-tree instead of
-    scanning the history table.
+    Runs one indexed top-1 query per group instead of a MAX(pk) JOIN over
+    the whole history table: on a multi-million-row states table the JOIN's
+    GROUP BY scans every row (seconds per request), while a per-group seek
+    stays fast. ``order`` columns pick the row (last_updated_ts lets SQLite
+    use the recorder's (metadata_id, last_updated_ts) index instead of a
+    temp b-tree over all of an entity's rows); the table's pk is the
+    fallback order.
     """
     out = {}
     for e in spec.get("extras", []):
         if phases:
             phases.mark(f"extras({e['table']})")
         value_cols = ", ".join(
-            f"s.{db.quote(v)} AS {db.quote(c)}" for c, v in e["cols"].items()
+            f"{db.quote(v)} AS {db.quote(c)}" for c, v in e["cols"].items()
         )
-        res = db.execute(
-            conn,
-            f"SELECT s.{db.quote(e['group'])} AS g, {value_cols} "
-            f"FROM {db.quote(e['table'])} s "
-            f"JOIN (SELECT {db.quote(e['group'])} AS m, MAX({db.quote(e['pk'])}) AS ms "
-            f"FROM {db.quote(e['table'])} GROUP BY {db.quote(e['group'])}) mm "
-            f"ON s.{db.quote(e['pk'])} = mm.ms AND s.{db.quote(e['group'])} = mm.m"
+        order = [db.quote(c) for c in e.get("order", [e["pk"]])]
+        sql = (
+            f"SELECT {value_cols} FROM {db.quote(e['table'])} "
+            f"WHERE {db.quote(e['group'])} = ? "
+            f"ORDER BY {', '.join(f'{c} DESC' for c in order)} LIMIT 1"
         )
-        for r in res.fetchall():
-            out[r["g"]] = {c: r[c] for c in e["cols"]}
+        for g in groups:
+            res = db.execute(conn, sql, [g]).fetchall()
+            if res:
+                out[g] = {c: res[0][c] for c in e["cols"]}
     return out
 
 
@@ -763,7 +768,9 @@ async def api_table(request):
 
             extra_cols = [c for e in spec.get("extras", []) for c in e["cols"]]
             extras = (
-                _count_view_extras(conn, spec, phases)
+                _count_view_extras(
+                    conn, spec, phases, groups=[br[first["group"]] for br in meta_rows]
+                )
                 if any(c in columns for c in extra_cols) else {}
             )
 

@@ -67,6 +67,21 @@ async def test_states_usage_sorted_by_cur_state(client):
     assert [row["cur_state"] for row in data["rows"]] == ["on", "off", "2.0"]
 
 
+async def test_states_usage_extras_pick_newest_last_updated_ts(client, seed_db):
+    conn = sqlite3.connect(seed_db)
+    conn.execute(
+        "INSERT INTO states (metadata_id, state, last_updated_ts) VALUES (1, 'newer_ts', 1200.0)"
+    )
+    conn.execute(
+        "INSERT INTO states (metadata_id, state, last_updated_ts) VALUES (1, 'highest_pk', 500.0)"
+    )
+    conn.commit()
+    conn.close()
+    r = await client.get("/api/table/states_meta", params={"counts": "1"})
+    data = await r.json()
+    assert _rows(data)["sensor.a"]["cur_state"] == "newer_ts"
+
+
 async def test_states_usage_with_since(client, seed_db):
     r = await client.get("/api/table/states_meta", params={"counts": "1", "since": "4"})
     data = await r.json()
