@@ -99,8 +99,40 @@
         }
 
         function goBack() {
+            const st = history.state;
+            if (st && st.app) { history.back(); return; }
             if (backAction) backAction();
         }
+
+        function navState(kind, extra) {
+            return Object.assign({ app: 'dbmgr', v: kind }, extra);
+        }
+
+        function navPush(state) { history.pushState(state, ''); }
+
+        function navReplace(state) { history.replaceState(state, ''); }
+
+        function tableSnapshot(name, page, sortKey, sortDir) {
+            return navState('table', {
+                name, page, sortKey: sortKey || null, sortDir: sortDir || null,
+                filter: tableFilter ? { col: tableFilter.col, value: tableFilter.value } : null,
+                search: tableSearchState
+            });
+        }
+
+        window.addEventListener('popstate', e => {
+            const st = e.state;
+            if (!st || !st.app) { showHome(false); return; }
+            if (st.v === 'table') {
+                showTable(st.name, st.page, st.sortKey, st.sortDir, st.filter, { search: st.search || '', push: false });
+            } else if (st.v === 'chart') {
+                showChart(st.metadataId, st.table, false);
+            } else if (st.v === 'settings') {
+                showSettings(false);
+            } else {
+                showHome(false);
+            }
+        });
 
         function setBack(action) {
             backAction = action;
@@ -187,8 +219,9 @@
             popup.addEventListener('mouseleave', removeColumnInfo);
         }
 
-        async function showHome() {
+        async function showHome(push = true) {
             const gen = beginView();
+            if (push) navPush(navState('home', {}));
             setBack(null);
             setViewSpec(null);
             tableState = null;
@@ -298,18 +331,18 @@
             return cols;
         }
 
-        async function showTable(name, page, sortKey, sortDir, filter) {
+        async function showTable(name, page, sortKey, sortDir, filter, opts = {}) {
             const gen = beginView();
             stopSettingsRefresh();
             const bt = backTo;
             setBack(bt
-                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter)
-                : showHome);
+                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter, { search: bt.search || '', push: false })
+                : () => showHome(false));
 
             const f = normalizeFilter(filter);
             tableFilter = f;
             backTo = null;
-            tableSearchState = '';
+            tableSearchState = opts.search !== undefined ? opts.search : '';
             clearTimeout(searchTimer);
 
             const meta = tableMeta(name);
@@ -318,6 +351,7 @@
             const sk = sortKey || (counts ? (meta.default_sort || null) : null);
             const sd = sortDir || (counts ? 'asc' : null);
             tableState = { name, page, sortKey: sk, sortDir: sd, filter: tableFilter };
+            if (opts.push !== false) navPush(tableSnapshot(name, page, sk, sd));
 
             const titleEl = document.getElementById('title');
             titleEl.textContent = meta.label || name;
@@ -378,13 +412,14 @@
                 lastTable.sortAction = (k, d) => reloadTable(name, 1, k, d, tableFilter);
                 lastTable.silentFetch = fetchFn;
                 updateTableInPlace(data, p => reloadTable(name, p, sk || '', sd || '', tableFilter));
+                navReplace(tableSnapshot(name, page, sk, sd));
             } finally {
                 showTitleProgress(false);
             }
         }
 
         function showLinked(target, filterCol, filterValue) {
-            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter } : null;
+            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter, search: tableSearchState } : null;
             showTable(target, 1, '', '', { col: filterCol, value: filterValue });
         }
 
@@ -403,11 +438,11 @@
         }
 
         function openChart(metadataId) {
-            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter } : null;
+            backTo = tableState ? { name: tableState.name, page: tableState.page, sortKey: tableState.sortKey, sortDir: tableState.sortDir, filter: tableState.filter, search: tableSearchState } : null;
             showChart(metadataId);
         }
 
-        async function showChart(metadataId, table) {
+        async function showChart(metadataId, table, push = true) {
             const gen = beginView();
             stopSettingsRefresh();
             setCleanNewVisible(false);
@@ -415,9 +450,10 @@
             lastTable = null;
             const bt = backTo;
             setBack(bt
-                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter)
-                : showHome);
+                ? () => showTable(bt.name, bt.page, bt.sortKey, bt.sortDir, bt.filter, { search: bt.search || '', push: false })
+                : () => showHome(false));
             backTo = null;
+            if (push) navPush(navState('chart', { metadataId, table: table || null }));
 
             document.getElementById('title').textContent = 'Statistics';
             showLoading();
@@ -801,9 +837,10 @@
             if (settingsRefreshId) { clearInterval(settingsRefreshId); settingsRefreshId = null; }
         }
 
-        function showSettings() {
+        function showSettings(push = true) {
             beginView();
-            setBack(showHome);
+            if (push) navPush(navState('settings', {}));
+            setBack(() => showHome(false));
             setViewSpec(null);
             lastTable = null;
             stopSettingsRefresh();
